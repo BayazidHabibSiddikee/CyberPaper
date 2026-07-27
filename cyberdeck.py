@@ -95,12 +95,18 @@ class CyberDeck(QWidget):
         cols.addWidget(self._center)
         cols.addWidget(self._right)
 
-        # Bottom bar
-        self._bottom = BottomBar(self)
+        # Bottom bar: a separate top-level DOCK window. i3 manages docks
+        # specially — always visible, screen space reserved (like i3bar).
+        self._bottom = BottomBar()
+        self._bottom.setWindowFlags(Qt.FramelessWindowHint)
+        self._bottom.setAttribute(Qt.WA_X11NetWmWindowTypeDock)
+        self._bottom.setAttribute(Qt.WA_ShowWithoutActivating)
         self._bottom.setFixedSize(sw, BOTTOM_H)
+        self._bottom.move(0, sh - BOTTOM_H)
+        self._bottom.setWindowTitle("sworddeck-bar")
 
         root.addWidget(cols_widget)
-        root.addWidget(self._bottom)
+        root.addStretch(1)
 
         # ── Also render a dark graph background render trigger ────
         # Re-render graph PNG every 10s if graph.json changed
@@ -164,6 +170,7 @@ def main():
 
     win = CyberDeck(sw, sh)
     win.show()
+    win._bottom.show()
 
     sys.exit(app.exec())
 

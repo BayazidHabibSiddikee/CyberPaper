@@ -37,7 +37,7 @@ jq -r '
   "  layout=neato;",
   "  overlap=false;",
   "  splines=true;",
-  "  bgcolor=\"#07090d\";",
+  "  bgcolor=\"transparent\";",
   "  node [shape=box style=\"filled,rounded\" fontname=\"monospace\" fontsize=12",
   "        fontcolor=\"#e6ebff\" penwidth=2 margin=0.2];",
   "  edge [color=\"#00c8ff88\" penwidth=1.8 arrowsize=0.8];",

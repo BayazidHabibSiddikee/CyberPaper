@@ -76,7 +76,7 @@ class CenterPanel(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         w, h = self.width(), self.height()
-        p.fillRect(self.rect(), BG)
+        # no fill — shared bluish background comes from the deck window
 
         # ── Clock ─────────────────────────────────────────────────
         now = datetime.now()

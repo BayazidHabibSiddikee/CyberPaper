@@ -1,91 +1,146 @@
-# Cyberdesk — bash/C-tools version (no Python)
+# Sworddeck — animated desktop HUD + status dock for i3
 
-Same idea as before — matrix rain + audio bars on the left, mission graph on
-the right, clock/CPU/RAM/disk/net bar on the bottom — built entirely from
-small existing Linux programs instead of a custom Qt app. Copy this whole
-folder anywhere (e.g. `~/animated-wallpaper-bash/`) on any Linux box and it
-runs the same way, no interpreter or build step required.
+A PySide6 desktop overlay that acts as your wallpaper, plus an always-visible
+bottom dock bar that **replaces i3bar**. One project, two windows:
 
-## Install (Arch)
-Everything except `xwinwrap` is in the official repos:
-```bash
-sudo pacman -S cmatrix cava conky jq graphviz rofi xterm playerctl libnotify xorg-xrandr
 ```
-`xwinwrap` is AUR-only:
-```bash
-yay -S xwinwrap-git
-# or with paru: paru -S xwinwrap-git
-```
-No `yay`/`paru` yet:
-```bash
-git clone https://aur.archlinux.org/xwinwrap-git.git
-cd xwinwrap-git && makepkg -si
+┌───────────────┬──────────────────────────────┬───────────────────┐
+│  LEFT         │  CENTER                      │  RIGHT            │
+│  glava audio  │  clock + date                │  CPU/RAM/DISK     │
+│  spectrum     │  mission graph (PNG)         │  network, temps   │
+│  (top 30%)    │  [✚ EDIT GRAPH] button       │  top 10 processes │
+│  matrix rain  │  nodes/uptime/kernel strip   │  quick keys       │
+│  below        │                              │  APPS + SETTINGS  │
+├───────────────┴──────────────────────────────┴───────────────────┤
+│ DOCK BAR (always visible, replaces i3bar):                       │
+│ workspaces · user/time · CPU · RAM · disk · net · music          │
+│                          wifi SSID+IP · volume · battery · uptime│
+└───────────────────────────────────────────────────────────────────┘
 ```
 
-<details>
-<summary>Debian/Ubuntu/Fedora (if you ever run this on a non-Arch box)</summary>
+- The **wallpaper window** is override-redirect (`Qt.BypassWindowManagerHint`)
+  so i3 never tiles it, and re-lowers itself every second so all your apps
+  stay on top. Buttons work wherever the desktop is exposed.
+- The **dock bar** is a real X11 dock window: i3 reserves its space and it is
+  never covered. Workspace numbers are clickable.
+- `glava --desktop -m graph` runs as a third transparent window over the top
+  of the left column.
+
+## Install on a fresh Arch box
 
 ```bash
-sudo apt install cmatrix cava conky-all jq graphviz rofi xterm playerctl \
-                  libnotify-bin x11-xserver-utils
+# 1. Packages
+sudo pacman -S python-pyside6 glava jq graphviz rofi playerctl libnotify \
+               xorg-xrandr pavucontrol redshift networkmanager \
+               ttf-jetbrains-mono maim
+
+# 2. A compositor must be running for transparency (add to i3 config):
+sudo pacman -S picom       # exec_always --no-startup-id picom
+
+# 3. Copy this folder
+git clone <your-repo> ~/animated-wallpaper   # or rsync/scp the folder
+cd ~/animated-wallpaper && chmod +x *.sh
+
+# 4. glava config (module + theme colors)
+glava -C                     # copies defaults to ~/.config/glava/
+sed -i 's/#request mod bars/#request mod graph/' ~/.config/glava/rc.glsl
+sed -i 's/setprintframes true/setprintframes false/' ~/.config/glava/rc.glsl
+sed -i 's|mix(#802A2A, #4F4F92|mix(#00D4FF, #00FFC8|' ~/.config/glava/graph.glsl
+
+# 5. First run
+./cyberdesk.sh start
 ```
-`xwinwrap` needs a manual build (`libx11-dev libxrender-dev` only):
+
+Debian/Ubuntu: `sudo apt install python3-pyside6.qtwidgets glava jq graphviz
+rofi playerctl libnotify-bin pavucontrol redshift network-manager
+fonts-jetbrains-mono maim picom` (package names vary slightly).
+
+## i3 integration
+
+Add to `~/.config/i3/config`:
+
+```
+# autostart + keybinds
+exec_always --no-startup-id ~/animated-wallpaper/cyberdesk.sh restart
+bindsym $mod+Ctrl+6      exec ~/animated-wallpaper/cyberdesk.sh restart
+bindsym $mod+Ctrl+e      exec ~/animated-wallpaper/graph-edit.sh
+bindsym $mod+Ctrl+Escape exec ~/animated-wallpaper/cyberdesk.sh stop
+```
+
+**Disable i3bar** (the dock bar replaces it) — comment out the whole
+`bar { … }` block in the i3 config, then `i3-msg reload`. Keep a backup;
+note you lose the system tray (nm-applet etc.) — add `stalonetray` if you
+need tray icons.
+
+## Launcher commands
+
 ```bash
-git clone https://github.com/mmhobi7/xwinwrap && cd xwinwrap && make && sudo make install
+./cyberdesk.sh start | stop | restart | status | edit
 ```
-</details>
 
-## Run it
-```bash
-chmod +x *.sh
-./cyberdesk.sh start      # or: restart / stop / status / edit
-```
-Add `i3-cyberdesk-bash.conf`'s contents to your i3 config for autostart +
-keybinds (`$mod+Ctrl+6` restart, `$mod+Ctrl+Escape` stop, `$mod+Ctrl+e`
-open the graph editor).
+`stop` also pkills stray `glava`/`cyberdeck.py` processes.
 
-## Editing your mission graph
-```bash
-./cyberdesk.sh edit
-```
-Opens a `rofi` menu: Add Task, Link Tasks (draws an arrow), Set Status,
-Rename, Delete. It edits `~/.config/animated-wallpaper/graph.json` directly
-(plain JSON, no schema surprises) and re-renders the PNG immediately. The
-background watcher also re-renders automatically if you edit that JSON file
-by hand or with any other tool.
+## Files
 
-## What I actually verified vs. what needs your first real test
-I don't have a display in my sandbox, so I could fully test and confirm:
-- the `jq` graph transforms (add/link/status/delete) — verified against real data
-- the `graphviz`/`neato` rendering (`graph-render.sh`) — produces a correct PNG
-- `net-speed.sh` and all bash syntax
+| File              | Purpose                                              |
+|-------------------|------------------------------------------------------|
+| `cyberdesk.sh`    | Launcher; computes glava geometry from xrandr        |
+| `cyberdeck.py`    | Wallpaper window + spawns the dock bar               |
+| `left_panel.py`   | Matrix rain / pipes animations (cycle every 45 s)    |
+| `center_panel.py` | Clock, mission-graph PNG, EDIT GRAPH button          |
+| `right_panel.py`  | Stats, top processes, APPS + SETTINGS buttons        |
+| `bottom_bar.py`   | Dock bar: workspaces, stats, wifi, volume, battery   |
+| `graph-edit.sh`   | rofi mission-graph editor                            |
+| `graph-render.sh` | graph.json → graph.png (graphviz, transparent bg)    |
 
-What I could **not** test end-to-end without an X server, and you should
-sanity-check on first run:
-- **xwinwrap flags** — I used the common `mmhobi7/xwinwrap` fork's flags
-  (`-ov -b -ni -nf -g`). If your installed fork differs, run
-  `xwinwrap --help` and compare; the flags are marked `[XWINWRAP FLAGS]` in
-  `cyberdesk.sh` so they're easy to find and adjust.
-- **`xterm -into %WIN`** — this is how cmatrix/cava get embedded into the
-  wallpaper-positioned window. It's a real, documented xterm feature, but
-  if your xterm build lacks it, swap in `urxvt -embed %WIN` instead (urxvt
-  supports the same trick).
-- **conky's `own_window_hints`** — `below,sticky,skip_taskbar,skip_pager`
-  should keep both conky panels beneath your windows and off the taskbar;
-  some WMs/compositors need `own_window_type = 'override'` instead of
-  `'desktop'` to actually stay below. If a panel steals focus or sits on
-  top, that's the line to flip first.
+Runtime state in `~/.config/animated-wallpaper/`: `graph.json`, `graph.png`,
+`apps.json`, `redshift.on` flag, logs, PID files.
 
-If any panel doesn't show up, run `./cyberdesk.sh status` and check the
-`log-*.txt` files in `~/.config/animated-wallpaper/` — each panel logs its
-own stdout/stderr there.
+## Buttons
+
+**Center**: `✚ EDIT GRAPH` → rofi editor (Add Task, Link, Status, Rename,
+Delete). Same as `$mod+Ctrl+e` / `./cyberdesk.sh edit`. Hand-edits to
+`graph.json` re-render automatically within ~10 s.
+
+**Right panel APPS**: launch entries from
+`~/.config/animated-wallpaper/apps.json`
+(`[{"name": "Terminal", "cmd": "alacritty"}, …]`). `✚ Add app…` prompts via
+rofi and appends; the list auto-rebuilds within 3 s of any file change.
+
+**Right panel SETTINGS**:
+- `✎ Edit graph` — rofi editor
+- `♪ Audio mixer` — pavucontrol
+- `⇄ Wifi on/off` — `nmcli radio wifi` toggle
+- `🔇 Mute on/off` — `pactl set-sink-mute @DEFAULT_SINK@ toggle`
+- `☾ Reading mode (5000K)` / `☀ Normal colors` — toggles
+  `redshift -O 5000` ↔ `redshift -x` (state kept in `redshift.on`)
+- `⚙ Config folder`, `⟳ Restart deck`
+
+## Dock bar
+
+- Workspace buttons (left) — click to switch; focused highlighted, urgent red
+- `[USERNAME]` + time/date, CPU, RAM, disk %, net ↓/↑ KB/s (computed from
+  `/proc/net/dev` between ticks), current track (playerctl)
+- Right side: wifi SSID + IP, volume (mute-aware), battery % (amber ≤40%,
+  red ≤20%), uptime
 
 ## Tuning
-- Left column width, bottom bar height, matrix-vs-cava split: the three
-  variables at the top of `cyberdesk.sh` (`LEFT_FRACTION`, `BOTTOM_H`,
-  `MATRIX_FRACTION`).
-- Matrix color/speed: edit the `xterm ... -e cmatrix -b -u 4` line
-  (`-u` = speed, `-b` = bold; see `man cmatrix`).
-- Audio bar look: `cava-config` (colors, bar count, smoothing).
-- Graph colors/layout engine: `graph-render.sh` (swap `neato` for `fdp` or
-  `dot` for a different layout style; `man graphviz`).
+
+- Column widths / bar height: `LEFT_PCT`, `RIGHT_PCT`, `BOTTOM_H` in
+  `cyberdeck.py` — keep `LEFT_PCT`/`BOTTOM_H` in sync with `cyberdesk.sh`.
+- glava height: `gh=$(( th * 30 / 100 ))` in `cyberdesk.sh` (top 30% of the
+  left column). Module: swap `-m graph` for `bars`, `wave`, `radial`.
+- Colors: QColor constants at the top of each panel file; spectrum colors in
+  `~/.config/glava/graph.glsl`.
+- Redshift warmth: change `5000` in `right_panel.py`.
+
+## Troubleshooting
+
+- **Deck invisible** → is a compositor running? Check
+  `~/.config/animated-wallpaper/cyberdeck.log`.
+- **Flat spectrum** → glava only draws while audio plays; see `glava.log`.
+- **Buttons dead** → they need exposed desktop; use keybinds when covered.
+- **glava has a glow/shadow** → picom shadow; add
+  `shadow-exclude = ["name = 'GLava'"]` to picom.conf.
+- **Wrong screen size** → `cyberdeck.py --screen 2560x1440` (auto-detects by
+  default; `cyberdesk.sh` uses xrandr for glava).

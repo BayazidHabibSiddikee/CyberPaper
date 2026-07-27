@@ -73,10 +73,8 @@ class MatrixRain(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, False)
 
-        # Dark semi-transparent background
-        p.fillRect(self.rect(), QColor(2, 10, 5, 210))
-
-        font = QFont("monospace", 10)
+        # No fill — the deck window paints the shared bluish background
+        font = QFont("monospace", 11)
         font.setBold(False)
         p.setFont(font)
 
@@ -87,8 +85,8 @@ class MatrixRain(QWidget):
             x = col * self.char_w
             y = row * self.char_h
             # green with alpha
-            g = int(200 * alpha)
-            b = int(80 * alpha)
+            g = int(255 * alpha)
+            b = int(140 * alpha)
             p.setPen(QColor(0, g, b, int(255 * alpha)))
             char = self.cell_chars[col] if col < len(self.cell_chars) else "0"
             p.drawText(x, y + self.char_h - 2, char)
@@ -200,7 +198,6 @@ class PipesWidget(QWidget):
 
     def paintEvent(self, e):
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor(2, 5, 15, 220))
         font = QFont("monospace", 11)
         p.setFont(font)
         for (c, r), (ch, color, age) in self.grid.items():

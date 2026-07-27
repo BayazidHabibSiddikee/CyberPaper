@@ -1,8 +1,37 @@
-"""right_panel.py — system stats shelf"""
-import os, subprocess
-from PySide6.QtWidgets import QWidget
+"""right_panel.py — system stats shelf + app launcher / settings buttons"""
+import os, json, subprocess
+from PySide6.QtWidgets import QWidget, QPushButton, QVBoxLayout, QLabel
 from PySide6.QtCore import Qt, QTimer, QRect
 from PySide6.QtGui import QPainter, QColor, QFont, QPen, QFontMetrics
+
+CFG_DIR   = os.path.expanduser("~/.config/animated-wallpaper")
+APPS_JSON = os.path.join(CFG_DIR, "apps.json")
+HERE      = os.path.dirname(os.path.abspath(__file__))
+
+DEFAULT_APPS = [
+    {"name": "Terminal", "cmd": "alacritty"},
+    {"name": "Browser",  "cmd": "zen-browser"},
+    {"name": "Files",    "cmd": "nautilus"},
+]
+
+BTN_QSS = """
+    QPushButton {
+        color: %s; background: rgba(0, 30, 45, 150); text-align: left;
+        border: 1px solid #1a3a5a; border-radius: 3px;
+        font: bold 9pt 'JetBrains Mono'; padding: 4px 10px;
+    }
+    QPushButton:hover { background: rgba(0, 80, 100, 210); border-color: #00d4ff; }
+"""
+LBL_QSS = "color: #00ffc8; font: bold 9pt 'JetBrains Mono'; padding-top: 4px;"
+
+
+def _load_apps():
+    try:
+        return json.load(open(APPS_JSON))
+    except Exception:
+        os.makedirs(CFG_DIR, exist_ok=True)
+        json.dump(DEFAULT_APPS, open(APPS_JSON, "w"), indent=2)
+        return list(DEFAULT_APPS)
 
 CYAN   = QColor(0, 212, 255)
 GREEN  = QColor(0, 255, 200)
@@ -73,7 +102,7 @@ def _net_speed():
         return "?", 0, 0
 
 
-def _top_procs(n=6):
+def _top_procs(n=10):
     try:
         out = subprocess.check_output(
             ["ps", "aux", "--sort=-%cpu"],
@@ -120,12 +149,133 @@ class RightPanel(QWidget):
         t.start(2000)
         self._update_stats()
 
+        self._build_dock()
+        try:
+            self._apps_mtime = os.path.getmtime(APPS_JSON)
+        except Exception:
+            self._apps_mtime = 0
+        ta = QTimer(self)
+        ta.timeout.connect(self._check_apps_changed)
+        ta.start(3000)
+
+    # ── App launcher / settings dock (bottom of the panel) ──────────
+    def _build_dock(self):
+        self._dock = QWidget(self)
+        self._dock.setAttribute(Qt.WA_TranslucentBackground)
+        lay = QVBoxLayout(self._dock)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(4)
+
+        def label(text):
+            l = QLabel(text, self._dock)
+            l.setStyleSheet(LBL_QSS)
+            lay.addWidget(l)
+
+        def button(text, cb, color="#c8dcff"):
+            b = QPushButton(text, self._dock)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setStyleSheet(BTN_QSS % color)
+            b.clicked.connect(cb)
+            lay.addWidget(b)
+            return b
+
+        label("── APPS ──")
+        for app in _load_apps():
+            cmd = app.get("cmd", "")
+            button(f"▸ {app.get('name', cmd)}",
+                   lambda _=False, c=cmd: self._launch(c))
+        button("✚ Add app…", self._add_app, "#00ffc8")
+
+        label("── SETTINGS ──")
+        button("✎ Edit graph",   lambda: self._launch(os.path.join(HERE, "graph-edit.sh")))
+        button("♪ Audio mixer",  lambda: self._launch("pavucontrol"))
+        button("⇄ Wifi on/off",  self._toggle_wifi)
+        button("🔇 Mute on/off",  lambda: self._launch(
+            "pactl set-sink-mute @DEFAULT_SINK@ toggle"))
+        self._redshift_btn = button("", self._toggle_redshift, "#ffc800")
+        self._update_redshift_label()
+        button("⚙ Config folder", lambda: self._launch(f"xdg-open {CFG_DIR}"))
+        button("⟳ Restart deck", self._restart_deck, "#ffc800")
+
+        self._dock.adjustSize()
+
+    def _launch(self, cmd):
+        if cmd:
+            subprocess.Popen(cmd, shell=True, start_new_session=True,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def _toggle_wifi(self):
+        self._launch(
+            'state=$(nmcli radio wifi); '
+            'if [ "$state" = "enabled" ]; then nmcli radio wifi off; '
+            'else nmcli radio wifi on; fi')
+
+    # redshift toggle: reading mode (warm 5000K) <-> normal (-x)
+    _REDSHIFT_FLAG = os.path.join(CFG_DIR, "redshift.on")
+
+    def _update_redshift_label(self):
+        on = os.path.exists(self._REDSHIFT_FLAG)
+        self._redshift_btn.setText(
+            "☀ Normal colors" if on else "☾ Reading mode (5000K)")
+
+    def _toggle_redshift(self):
+        if os.path.exists(self._REDSHIFT_FLAG):
+            self._launch("redshift -x")
+            os.remove(self._REDSHIFT_FLAG)
+        else:
+            self._launch("redshift -O 5000")
+            open(self._REDSHIFT_FLAG, "w").close()
+        self._update_redshift_label()
+
+    def _restart_deck(self):
+        subprocess.Popen([os.path.join(HERE, "cyberdesk.sh"), "restart"],
+                         start_new_session=True,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def _add_app(self):
+        # rofi prompts run in a detached shell so the deck's event loop
+        # never blocks; the mtime watcher rebuilds the dock afterwards.
+        script = (
+            'name=$(rofi -dmenu -p "App name:" </dev/null); '
+            '[ -z "$name" ] && exit 0; '
+            'cmd=$(rofi -dmenu -p "Command:" </dev/null); '
+            '[ -z "$cmd" ] && exit 0; '
+            f'python3 -c "import json; f={APPS_JSON!r}; '
+            'a=json.load(open(f)); '
+            "a.append({'name': __import__('sys').argv[1], 'cmd': __import__('sys').argv[2]}); "
+            'json.dump(a, open(f, \'w\'), indent=2)" "$name" "$cmd"'
+        )
+        subprocess.Popen(["bash", "-c", script], start_new_session=True,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def _check_apps_changed(self):
+        try:
+            mt = os.path.getmtime(APPS_JSON)
+        except Exception:
+            return
+        if mt != self._apps_mtime:
+            self._apps_mtime = mt
+            self._dock.deleteLater()
+            self._build_dock()
+            self._dock.show()
+            self._place_dock()
+
+    def _place_dock(self):
+        self._dock.adjustSize()
+        dw = self.width() - 24
+        self._dock.setGeometry(12, self.height() - self._dock.height() - 12,
+                               dw, self._dock.height())
+
+    def resizeEvent(self, e):
+        self._place_dock()
+        super().resizeEvent(e)
+
     def _update_stats(self):
         self._cpu          = _cpu_percent()
         self._mem_used, self._mem_total = _mem()
         self._iface, self._rx, self._tx = _net_speed()
         self._temp         = _cpu_temp()
-        self._procs        = _top_procs(6)
+        self._procs        = _top_procs(10)
         self.update()
 
     # ── helpers ──────────────────────────────────────────────────
@@ -152,7 +302,7 @@ class RightPanel(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         W, H = self.width(), self.height()
-        p.fillRect(self.rect(), BG)
+        # no fill — shared bluish background comes from the deck window
 
         x   = 12
         bw  = W - 24
@@ -163,8 +313,8 @@ class RightPanel(QWidget):
         # ── Header ───────────────────────────────────────────────
         f = QFont("JetBrains Mono", 16, QFont.Bold)
         p.setFont(f); p.setPen(CYAN)
-        hw = QFontMetrics(f).horizontalAdvance("▸ CYBERDECK")
-        p.drawText((W - hw) // 2, y + 20, "▸ CYBERDECK")
+        hw = QFontMetrics(f).horizontalAdvance("▸ SWORDDECK")
+        p.drawText((W - hw) // 2, y + 20, "▸ SWORDDECK")
         y += 34
         p.setPen(QPen(DIM, 1)); p.drawLine(x, y, x + bw, y); y += 10
 
