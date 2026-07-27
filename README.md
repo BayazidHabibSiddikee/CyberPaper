@@ -18,6 +18,8 @@ bottom dock bar that **replaces i3bar**. One project, two windows:
 └───────────────────────────────────────────────────────────────────┘
 ```
 
+![Sworddeck Screenshot](screenshots/1785180506.png)
+
 - The **wallpaper window** is override-redirect (`Qt.BypassWindowManagerHint`)
   so i3 never tiles it, and re-lowers itself every second so all your apps
   stay on top. Buttons work wherever the desktop is exposed.
