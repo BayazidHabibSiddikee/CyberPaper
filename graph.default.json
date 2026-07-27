@@ -1,0 +1,18 @@
+{
+  "nodes": [
+    {"id": "core",  "label": "Set up cyberdesk",            "status": "done"},
+    {"id": "learn", "label": "Learn the graph editor",       "status": "in-progress"},
+    {"id": "vault", "label": "Point it at my Obsidian vault","status": "todo"},
+    {"id": "habit", "label": "Daily task 1",                 "status": "todo"},
+    {"id": "habit2","label": "Daily task 2",                 "status": "todo"},
+    {"id": "goal",  "label": "Long-term goal",                "status": "todo"}
+  ],
+  "edges": [
+    {"from": "core",   "to": "learn"},
+    {"from": "core",   "to": "vault"},
+    {"from": "learn",  "to": "habit"},
+    {"from": "learn",  "to": "habit2"},
+    {"from": "vault",  "to": "goal"},
+    {"from": "habit2", "to": "goal"}
+  ]
+}
