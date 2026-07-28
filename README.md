@@ -1,148 +1,241 @@
-# Sworddeck — animated desktop HUD + status dock for i3
+# Sworddeck — Animated Desktop HUD + Audio Visualizer for i3
 
-A PySide6 desktop overlay that acts as your wallpaper, plus an always-visible
-bottom dock bar that **replaces i3bar**. One project, two windows:
+A PySide6-powered animated desktop overlay that replaces your wallpaper with a full-featured cyberpunk HUD. Features a mission graph, system stats, app launcher, and a real-time audio visualizer (glava) layered behind everything.
+
+## Screenshots
+
+### Full Desktop — Glava Audio Visualizer + Cyberdeck
+![Full Desktop](screenshots/1785180506.png)
+
+Glava audio visualizer runs as the absolute bottom layer, with the cyberdeck panels on top. All normal windows (browsers, terminals, etc.) appear above everything.
+
+### Cyberdeck — Mission Graph + System Stats
+![Cyberdeck](screenshots/1785180719.png)
+
+The main cyberdeck interface with clock, mission graph editor, system stats, app launcher, and quick settings.
+
+### Real-World Usage — Apps Over Cyberdeck
+![Apps Over Cyberdeck](screenshots/1785180803.png)
+
+Normal applications (YouTube, terminals) open on top of the cyberdeck while glava audio visualizer remains visible at the bottom edge.
+
+## Window Stacking Order
 
 ```
-┌───────────────┬──────────────────────────────┬───────────────────┐
-│  LEFT         │  CENTER                      │  RIGHT            │
-│  glava audio  │  clock + date                │  CPU/RAM/DISK     │
-│  spectrum     │  mission graph (PNG)         │  network, temps   │
-│  (top 30%)    │  [✚ EDIT GRAPH] button       │  top 10 processes │
-│  matrix rain  │  nodes/uptime/kernel strip   │  quick keys       │
-│  below        │                              │  APPS + SETTINGS  │
-├───────────────┴──────────────────────────────┴───────────────────┤
-│ DOCK BAR (always visible, replaces i3bar):                       │
-│ workspaces · user/time · CPU · RAM · disk · net · music          │
-│                          wifi SSID+IP · volume · battery · uptime│
-└───────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────┐
+│  Normal Windows (browsers, terminals, etc.)     │  ← TOP
+├─────────────────────────────────────────────────┤
+│  Cyberdeck (panels, clock, graphs, stats)       │  ← MIDDLE
+├─────────────────────────────────────────────────┤
+│  Glava (audio visualizer, matrix rain)          │  ← BOTTOM
+└─────────────────────────────────────────────────┘
 ```
 
-![Sworddeck Screenshot](screenshots/1785180506.png)
+- **Glava**: `_NET_WM_WINDOW_TYPE_DESKTOP` — absolute lowest layer
+- **Cyberdeck**: `_NET_WM_STATE_BELOW` — above glava, below all apps
+- All apps open on top automatically
 
-- The **wallpaper window** is override-redirect (`Qt.BypassWindowManagerHint`)
-  so i3 never tiles it, and re-lowers itself every second so all your apps
-  stay on top. Buttons work wherever the desktop is exposed.
-- The **dock bar** is a real X11 dock window: i3 reserves its space and it is
-  never covered. Workspace numbers are clickable.
-- `glava --desktop -m graph` runs as a third transparent window over the top
-  of the left column.
+## Features
 
-## Install on a fresh Arch box
+- **Animated Background** — gradient, particles, wave, matrix, or audio spectrum modes
+- **Mission Graph** — visual node graph rendered via graphviz, editable through rofi
+- **System Stats** — CPU, RAM, disk, network, top processes, battery, uptime
+- **App Launcher** — quick-launch apps from a configurable list
+- **Audio Visualizer** — full-screen glava graph behind the cyberdeck
+- **Dock Bar** — replaces i3bar with workspaces, stats, wifi, volume
+- **Quick Settings** — redshift, audio mixer, wifi toggle, mute toggle
 
+## Installation
+
+### Prerequisites
+
+- **i3 window manager** (or compatible tiling WM)
+- **X11** (Wayland not supported)
+- **Compositor** (picom recommended for transparency)
+
+### Step 1: Install Packages
+
+**Arch Linux:**
 ```bash
-# 1. Packages
 sudo pacman -S python-pyside6 glava jq graphviz rofi playerctl libnotify \
                xorg-xrandr pavucontrol redshift networkmanager \
-               ttf-jetbrains-mono maim
-
-# 2. A compositor must be running for transparency (add to i3 config):
-sudo pacman -S picom       # exec_always --no-startup-id picom
-
-# 3. Copy this folder
-git clone <your-repo> ~/animated-wallpaper   # or rsync/scp the folder
-cd ~/animated-wallpaper && chmod +x *.sh
-
-# 4. glava config (module + theme colors)
-glava -C                     # copies defaults to ~/.config/glava/
-sed -i 's/#request mod bars/#request mod graph/' ~/.config/glava/rc.glsl
-sed -i 's/setprintframes true/setprintframes false/' ~/.config/glava/rc.glsl
-sed -i 's|mix(#802A2A, #4F4F92|mix(#00D4FF, #00FFC8|' ~/.config/glava/graph.glsl
-
-# 5. First run
-./cyberdesk.sh start
+               ttf-jetbrains-mono maim xdotool wmctrl picom
 ```
 
-Debian/Ubuntu: `sudo apt install python3-pyside6.qtwidgets glava jq graphviz
-rofi playerctl libnotify-bin pavucontrol redshift network-manager
-fonts-jetbrains-mono maim picom` (package names vary slightly).
+**Debian/Ubuntu:**
+```bash
+sudo apt install python3-pyside6.qtwidgets glava jq graphviz rofi \
+               playerctl libnotify-bin pavucontrol redshift \
+               network-manager fonts-jetbrains-mono maim picom \
+               xdotool wmctrl
+```
 
-## i3 integration
+### Step 2: Clone the Repository
+
+```bash
+git clone https://github.com/BayazidHabibSiddikee/CyberPaper.git ~/animated-wallpaper
+cd ~/animated-wallpaper
+chmod +x *.sh
+```
+
+### Step 3: Configure Glava
+
+```bash
+# Copy default config
+glava -C
+
+# Set graph module
+sed -i 's/#request mod bars/#request mod graph/' ~/.config/glava/rc.glsl
+
+# Disable debug frames
+sed -i 's/setprintframes true/setprintframes false/' ~/.config/glava/rc.glsl
+
+# Set cyan theme colors (matches cyberdeck)
+sed -i 's|mix(#802A2A, #4F4F92|mix(#00D4FF, #00FFC8|' ~/.config/glava/graph.glsl
+```
+
+### Step 4: Configure i3
 
 Add to `~/.config/i3/config`:
 
-```
-# autostart + keybinds
+```bash
+# Start cyberdeck on login
 exec_always --no-startup-id ~/animated-wallpaper/cyberdesk.sh restart
+
+# Keybinds
 bindsym $mod+Ctrl+6      exec ~/animated-wallpaper/cyberdesk.sh restart
 bindsym $mod+Ctrl+e      exec ~/animated-wallpaper/graph-edit.sh
 bindsym $mod+Ctrl+Escape exec ~/animated-wallpaper/cyberdesk.sh stop
 ```
 
-**Disable i3bar** (the dock bar replaces it) — comment out the whole
-`bar { … }` block in the i3 config, then `i3-msg reload`. Keep a backup;
-note you lose the system tray (nm-applet etc.) — add `stalonetray` if you
-need tray icons.
-
-## Launcher commands
-
+**Disable i3bar** (the dock bar replaces it):
+Comment out the entire `bar { ... }` block in your i3 config, then reload:
 ```bash
-./cyberdesk.sh start | stop | restart | status | edit
+i3-msg reload
 ```
 
-`stop` also pkills stray `glava`/`cyberdeck.py` processes.
+> **Note:** You lose the system tray (nm-applet, etc.). Use `stalonetray` if you need tray icons.
 
-## Files
+### Step 5: Start
 
-| File              | Purpose                                              |
-|-------------------|------------------------------------------------------|
-| `cyberdesk.sh`    | Launcher; computes glava geometry from xrandr        |
-| `cyberdeck.py`    | Wallpaper window + spawns the dock bar               |
-| `left_panel.py`   | Matrix rain / pipes animations (cycle every 45 s)    |
-| `center_panel.py` | Clock, mission-graph PNG, EDIT GRAPH button          |
-| `right_panel.py`  | Stats, top processes, APPS + SETTINGS buttons        |
-| `bottom_bar.py`   | Dock bar: workspaces, stats, wifi, volume, battery   |
-| `graph-edit.sh`   | rofi mission-graph editor                            |
-| `graph-render.sh` | graph.json → graph.png (graphviz, transparent bg)    |
+```bash
+./cyberdesk.sh start
+```
 
-Runtime state in `~/.config/animated-wallpaper/`: `graph.json`, `graph.png`,
-`apps.json`, `redshift.on` flag, logs, PID files.
+Or restart anytime:
+```bash
+./cyberdesk.sh restart
+```
+
+## Launcher Commands
+
+```bash
+./cyberdesk.sh start     # Start cyberdeck + glava
+./cyberdesk.sh stop      # Stop everything
+./cyberdesk.sh restart   # Restart
+./cyberdesk.sh status    # Check if running
+./cyberdesk.sh edit      # Edit mission graph
+```
+
+## Keybinds
+
+| Keybind              | Action                    |
+|----------------------|---------------------------|
+| `Super+Return`       | Open terminal             |
+| `Super+d`            | App launcher (rofi)       |
+| `Super+Ctrl+6`       | Restart cyberdeck         |
+| `Super+Ctrl+e`       | Edit mission graph        |
+| `Super+q`            | Close window              |
+| `PrtSc`              | Screenshot                |
+
+## File Structure
+
+| File                | Purpose                                             |
+|---------------------|-----------------------------------------------------|
+| `cyberdesk.sh`      | Launcher — manages cyberdeck + glava processes       |
+| `cyberdeck.py`      | Main window — panels, layout, X11 hints              |
+| `main_panel.py`     | Clock, mission graph, pipes animation                |
+| `right_panel.py`    | System stats, apps, settings                         |
+| `bottom_bar.py`     | Dock bar — workspaces, stats, wifi, volume           |
+| `spectrum_overlay.py` | Built-in audio spectrum (when glava disabled)      |
+| `left_panel.py`     | Matrix rain / pipes animations                       |
+| `pipes_layer.py`    | Animated pipes texture                               |
+| `graph-edit.sh`     | Rofi-based mission graph editor                      |
+| `graph-render.sh`   | Renders graph.json → graph.png via graphviz          |
+| `graph.default.json`| Default mission graph data                           |
+
+Runtime config: `~/.config/animated-wallpaper/`
+- `graph.json` / `graph.png` — mission graph data and rendered image
+- `apps.json` — app launcher entries
+- `cyberdeck.log` / `glava.log` — logs
+- `cyberdeck.pid` / `glava.pid` — process tracking
 
 ## Buttons
 
-**Center**: `✚ EDIT GRAPH` → rofi editor (Add Task, Link, Status, Rename,
-Delete). Same as `$mod+Ctrl+e` / `./cyberdesk.sh edit`. Hand-edits to
-`graph.json` re-render automatically within ~10 s.
+### Center Panel
+- **✚ EDIT GRAPH** — Opens rofi editor for mission graph (same as `Super+Ctrl+e`)
 
-**Right panel APPS**: launch entries from
-`~/.config/animated-wallpaper/apps.json`
-(`[{"name": "Terminal", "cmd": "alacritty"}, …]`). `✚ Add app…` prompts via
-rofi and appends; the list auto-rebuilds within 3 s of any file change.
+### Right Panel — APPS
+- Quick-launch apps from `~/.config/animated-wallpaper/apps.json`
+- **✚ Add app...** — Prompts via rofi to add new apps
+- Auto-rebuilds within 3 seconds of file changes
 
-**Right panel SETTINGS**:
-- `✎ Edit graph` — rofi editor
-- `♪ Audio mixer` — pavucontrol
-- `⇄ Wifi on/off` — `nmcli radio wifi` toggle
-- `🔇 Mute on/off` — `pactl set-sink-mute @DEFAULT_SINK@ toggle`
-- `☾ Reading mode (5000K)` / `☀ Normal colors` — toggles
-  `redshift -O 5000` ↔ `redshift -x` (state kept in `redshift.on`)
-- `⚙ Config folder`, `⟳ Restart deck`
+### Right Panel — SETTINGS
+- **✎ Edit graph** — Rofi graph editor
+- **♪ Audio mixer** — Opens pavucontrol
+- **⇄ Wifi on/off** — Toggles `nmcli radio wifi`
+- **🔇 Mute on/off** — Toggles `pactl set-sink-mute`
+- **☾ Reading mode (5000K)** / **☀ Normal colors** — Redshift toggle
+- **⚙ Config folder** — Opens config directory
+- **⟳ Restart deck** — Restarts cyberdeck
 
-## Dock bar
+## Dock Bar
 
-- Workspace buttons (left) — click to switch; focused highlighted, urgent red
-- `[USERNAME]` + time/date, CPU, RAM, disk %, net ↓/↑ KB/s (computed from
-  `/proc/net/dev` between ticks), current track (playerctl)
-- Right side: wifi SSID + IP, volume (mute-aware), battery % (amber ≤40%,
-  red ≤20%), uptime
+The dock bar replaces i3bar and shows:
+- **Left:** Workspace buttons (click to switch, focused highlighted, urgent red)
+- **Center:** Username, time/date, CPU, RAM, disk %, network speed, current track
+- **Right:** WiFi SSID + IP, volume (mute-aware), battery % (amber ≤40%, red ≤20%), uptime
 
-## Tuning
+## Customization
 
-- Column widths / bar height: `LEFT_PCT`, `RIGHT_PCT`, `BOTTOM_H` in
-  `cyberdeck.py` — keep `LEFT_PCT`/`BOTTOM_H` in sync with `cyberdesk.sh`.
-- glava height: `gh=$(( th * 30 / 100 ))` in `cyberdesk.sh` (top 30% of the
-  left column). Module: swap `-m graph` for `bars`, `wave`, `radial`.
-- Colors: QColor constants at the top of each panel file; spectrum colors in
-  `~/.config/glava/graph.glsl`.
-- Redshift warmth: change `5000` in `right_panel.py`.
+### Column Widths
+Edit in `cyberdeck.py`:
+```python
+LEFT_PCT   = 28   # Left column width %
+CENTER_PCT = 44   # Center column width %
+RIGHT_PCT  = 28   # Right column width %
+BOTTOM_H   = 32   # Dock bar height in pixels
+```
+
+### Glava Height
+In `cyberdesk.sh`:
+```bash
+gh=$(( sh * 22 / 100 ))   # Bottom 22% of screen
+```
+
+### Colors
+- Cyberdeck colors: `QColor` constants at top of each panel file
+- Glava spectrum: `~/.config/glava/graph.glsl`
+- Redshift warmth: change `5000` in `right_panel.py`
+
+### Glava Module
+Swap `-m graph` in `cyberdesk.sh` for other modules:
+- `bars` — bar equalizer
+- `wave` — waveform
+- `radial` — radial visualizer
 
 ## Troubleshooting
 
-- **Deck invisible** → is a compositor running? Check
-  `~/.config/animated-wallpaper/cyberdeck.log`.
-- **Flat spectrum** → glava only draws while audio plays; see `glava.log`.
-- **Buttons dead** → they need exposed desktop; use keybinds when covered.
-- **glava has a glow/shadow** → picom shadow; add
-  `shadow-exclude = ["name = 'GLava'"]` to picom.conf.
-- **Wrong screen size** → `cyberdeck.py --screen 2560x1440` (auto-detects by
-  default; `cyberdesk.sh` uses xrandr for glava).
+| Issue | Solution |
+|-------|----------|
+| **Deck invisible** | Is picom running? Check `~/.config/animated-wallpaper/cyberdeck.log` |
+| **Flat spectrum** | Glava only draws while audio plays; see `glava.log` |
+| **Buttons dead** | They need exposed desktop; use keybinds when covered |
+| **Glava glow/shadow** | Add `shadow-exclude = ["name = 'GLava'"]` to picom.conf |
+| **Wrong screen size** | Run `cyberdeck.py --screen 2560x1440` (auto-detects by default) |
+| **Apps open behind deck** | Run `./cyberdesk.sh restart` to re-apply X11 hints |
+| **Glava on top of apps** | Ensure `xdotool` and `wmctrl` are installed |
+
+## License
+
+MIT
