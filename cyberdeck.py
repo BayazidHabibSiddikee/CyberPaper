@@ -17,10 +17,10 @@ from PySide6.QtWidgets import QApplication, QWidget, QHBoxLayout, QVBoxLayout
 from PySide6.QtCore    import Qt, QTimer
 from PySide6.QtGui     import QPainter, QColor
 
-from left_panel   import LeftPanel
-from center_panel import CenterPanel
+from main_panel   import MainPanel
 from right_panel  import RightPanel
 from bottom_bar   import BottomBar
+from spectrum_overlay import SpectrumOverlay
 
 # Column width percentages
 LEFT_PCT   = 28
@@ -28,8 +28,10 @@ CENTER_PCT = 44   # 100 - 28 - 28
 RIGHT_PCT  = 28
 BOTTOM_H   = 32   # px
 
-# When glava runs below us as the audio visualizer, the left column must be
-# a transparent hole so the glava window shows through.
+# CYBERDECK_GLAVA=1 turns on the built-in, transparent bottom-up audio
+# spectrum overlay across the graph area (left + center columns) — see
+# spectrum_overlay.py. Off by default so the deck stays lightweight when
+# you don't want it.
 GLAVA_MODE = os.environ.get("CYBERDECK_GLAVA") == "1"
 
 
@@ -83,17 +85,25 @@ class CyberDeck(QWidget):
 
         top_h = sh - BOTTOM_H
 
-        self._left   = LeftPanel(cols_widget)
-        self._center = CenterPanel(cols_widget)
-        self._right  = RightPanel(cols_widget)
+        # Left + center are now a single merged panel — one pixmap, one
+        # paintEvent, no crop_x seam between two separately-drawn widgets.
+        self._main  = MainPanel(cols_widget)
+        self._right = RightPanel(cols_widget)
 
-        self._left  .setFixedSize(lw, top_h)
-        self._center.setFixedSize(cw, top_h)
-        self._right .setFixedSize(rw, top_h)
+        self._main .setFixedSize(lw + cw, top_h)
+        self._right.setFixedSize(rw, top_h)
 
-        cols.addWidget(self._left)
-        cols.addWidget(self._center)
+        cols.addWidget(self._main)
         cols.addWidget(self._right)
+
+        # ── Bottom-up audio spectrum, overlaid on the graph area ────────
+        # Sits above the left+center columns (same combined width/height
+        # as the graph they share), transparent and click-through, so the
+        # graph and pipes texture stay visible underneath it.
+        self._spectrum = None
+        if GLAVA_MODE:
+            self._spectrum = SpectrumOverlay(self)
+            self._spectrum.setGeometry(0, 0, lw + cw, top_h)
 
         # Bottom bar: a separate top-level DOCK window. i3 manages docks
         # specially — always visible, screen space reserved (like i3bar).
@@ -107,6 +117,9 @@ class CyberDeck(QWidget):
 
         root.addWidget(cols_widget)
         root.addStretch(1)
+
+        if self._spectrum is not None:
+            self._spectrum.raise_()
 
         # ── Also render a dark graph background render trigger ────
         # Re-render graph PNG every 10s if graph.json changed
@@ -123,20 +136,20 @@ class CyberDeck(QWidget):
             if mt != self._graph_mtime:
                 self._graph_mtime = mt
                 script = os.path.join(HERE, "graph-render.sh")
-                cw = self.SW * CENTER_PCT // 100
-                ch = self.SH - BOTTOM_H
+                rw = self.SW * RIGHT_PCT // 100
+                gw = self.SW - rw   # combined left+center width
+                gh = self.SH - BOTTOM_H
                 subprocess.Popen(
-                    [script, str(cw), str(ch)],
+                    [script, str(gw), str(gh)],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
                 )
         except Exception:
             pass
 
     def paintEvent(self, _):
-        # Solid dark fill behind panels (entire window background)
+        # Solid dark fill behind everything (panels + spectrum overlay sit
+        # on top of this same flat background).
         p = QPainter(self)
-        # glava (transparent, stacked just above us at the bottom of the
-        # stack) draws its spectrum over the left column's dark fill.
         p.fillRect(self.rect(), QColor(2, 6, 18, 255))
         p.end()
 

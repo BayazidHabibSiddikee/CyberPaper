@@ -1,11 +1,23 @@
-"""center_panel.py — mission graph PNG + live clock HUD"""
+"""main_panel.py — merged left+center panel.
+
+This replaces left_panel.py + center_panel.py. Those two used to split a
+single shared graph image with a crop_x offset so it would "read as one
+picture" across the seam — but two independently-painted widgets drawing
+their own slice never lines up perfectly (text clipped mid-word at the
+column boundary, the telemetry strip only living in the center column,
+etc). Now it's one widget spanning the full left+center width, so there
+is no seam: one pixmap, one paintEvent, one telemetry strip running the
+full width along the bottom.
+"""
 import os, json, subprocess
 from datetime import datetime
 from PySide6.QtWidgets import QWidget, QPushButton
 from PySide6.QtCore import Qt, QTimer, QRect
 from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QFontMetrics, QPen
 
-CFG_DIR   = os.path.expanduser("~/.config/animated-wallpaper")
+from pipes_layer import PipesLayer
+
+CFG_DIR    = os.path.expanduser("~/.config/animated-wallpaper")
 GRAPH_PNG  = os.path.join(CFG_DIR, "graph.png")
 GRAPH_JSON = os.path.join(CFG_DIR, "graph.json")
 
@@ -13,23 +25,25 @@ CYAN  = QColor(0, 212, 255)
 GREEN = QColor(0, 255, 200)
 DIM   = QColor(26, 58, 90)
 WHITE = QColor(220, 235, 255)
-BG    = QColor(2, 8, 20, 200)
 
 
-class CenterPanel(QWidget):
-    def __init__(self, parent=None, crop_x=0, total_w=None):
+class MainPanel(QWidget):
+    """Full-width panel spanning what used to be the left + center columns."""
+
+    def __init__(self, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self._crop_x   = crop_x
-        self._total_w  = total_w
-        self._px       = None
-        self._mtime    = 0
-        self._nodes    = 0
-        self._edges    = 0
+
+        self._pipes = PipesLayer(self)
+
+        self._px    = None
+        self._mtime = 0
+        self._nodes = 0
+        self._edges = 0
         self._load_graph()
 
-        t1 = QTimer(self); t1.timeout.connect(self.update);         t1.start(1000)
-        t2 = QTimer(self); t2.timeout.connect(self._check_graph);   t2.start(3000)
+        t1 = QTimer(self); t1.timeout.connect(self.update);       t1.start(1000)
+        t2 = QTimer(self); t2.timeout.connect(self._check_graph); t2.start(3000)
 
         self._edit_btn = QPushButton("✚ EDIT GRAPH", self)
         self._edit_btn.setCursor(Qt.PointingHandCursor)
@@ -80,6 +94,9 @@ class CenterPanel(QWidget):
         w, h = self.width(), self.height()
         # no fill — shared bluish background comes from the deck window
 
+        # ── Bottom layer: animated pipes texture ────────────────────
+        self._pipes.paint(p)
+
         # ── Clock ─────────────────────────────────────────────────
         now = datetime.now()
         clock_f = QFont("JetBrains Mono", 34, QFont.Bold)
@@ -100,29 +117,25 @@ class CenterPanel(QWidget):
         p.setFont(lbl_f); p.setPen(GREEN)
         p.drawText(16, 114, "▶  MISSION GRAPH")
 
-        # ── Graph image — this panel's slice of the shared mission graph,
-        # continuing on from the same image the left panel draws its own
-        # slice of, so the two read as one picture across both columns ──
+        # ── Graph image — full width now, no crop/seam ──────────────
         graph_top = 120
-        graph_h   = h - graph_top - 78
+        graph_h   = h - graph_top - 40   # leave room for telemetry strip
         if self._px and not self._px.isNull():
-            src = QRect(self._crop_x, graph_top, w, graph_h)
-            src = src.intersected(self._px.rect())
+            src = self._px.rect()
             p.drawPixmap(QRect(0, graph_top, w, graph_h), self._px, src)
         else:
             p.setPen(DIM)
             p.setFont(QFont("JetBrains Mono", 11))
             p.drawText(QRect(0, graph_top, w, graph_h), Qt.AlignCenter, "[ no graph ]")
 
-        # ── Telemetry strip ───────────────────────────────────────
-        sy = h - 72
+        # ── Telemetry strip — one line, spans the full merged width ──
+        sy = h - 34
         p.setPen(QPen(DIM, 1)); p.drawLine(16, sy, w - 16, sy)
-        sm_f = QFont("JetBrains Mono", 9)
-        p.setFont(sm_f)
+        p.setFont(QFont("JetBrains Mono", 9))
 
         try:
-            secs  = float(open("/proc/uptime").read().split()[0])
-            upt   = f"{int(secs//3600)}h {int((secs%3600)//60)}m"
+            secs = float(open("/proc/uptime").read().split()[0])
+            upt  = f"{int(secs // 3600)}h {int((secs % 3600) // 60)}m"
         except Exception:
             upt = "?"
         try:
@@ -130,7 +143,18 @@ class CenterPanel(QWidget):
         except Exception:
             kern = "?"
 
-        p.setPen(GREEN);  p.drawText(16, sy + 18, f"◈ Nodes: {self._nodes}   Links: {self._edges}")
-        p.setPen(WHITE);  p.drawText(16, sy + 36, f"◈ Uptime: {upt}")
-        p.setPen(CYAN);   p.drawText(16, sy + 54, f"◈ Kernel: {kern}")
+        tx = 16
+        p.setPen(GREEN)
+        s = f"◈ Nodes: {self._nodes}   Links: {self._edges}"
+        p.drawText(tx, sy + 16, s)
+        tx += QFontMetrics(p.font()).horizontalAdvance(s) + 30
+
+        p.setPen(WHITE)
+        s = f"◈ Uptime: {upt}"
+        p.drawText(tx, sy + 16, s)
+        tx += QFontMetrics(p.font()).horizontalAdvance(s) + 30
+
+        p.setPen(CYAN)
+        p.drawText(tx, sy + 16, f"◈ Kernel: {kern}")
+
         p.end()

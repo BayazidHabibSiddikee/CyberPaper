@@ -40,6 +40,7 @@ start() {
         gh=$(( th * 30 / 100 ))   # glava takes the top 30% of the column
         nohup glava --desktop -m graph \
             -r "setgeometry 0 0 $lw $gh" \
+            -r "setborder false" \
             > "$CFG_DIR/glava.log" 2>&1 &
         echo $! > "$GLAVA_PID_FILE"
         GLAVA=1

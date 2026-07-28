@@ -97,12 +97,44 @@ def _uptime():
         return "↑ ?"
 
 
-def _wifi():
+_NET_ICONS = {
+    "wifi": "📶", "ethernet": "🔌",
+    "gsm": "📡", "cdma": "📡", "wimax": "📡",  # mobile broadband / modem
+}
+
+
+def _network():
+    """Active connection name + type, via nmcli — works for wifi, wired
+    ethernet, and mobile broadband/USB modem connections alike (not just
+    wifi), so the bar is accurate regardless of how the box is online."""
+    name, icon = "—", "🌐"
     try:
-        ssid = subprocess.check_output(["iwgetid", "-r"], timeout=1,
-                                       text=True).strip() or "—"
+        out = subprocess.check_output(
+            ["nmcli", "-t", "-f", "TYPE,STATE,CONNECTION", "device"],
+            timeout=1, text=True)
+        best = None
+        for line in out.splitlines():
+            parts = line.split(":")
+            if len(parts) < 3:
+                continue
+            dtype, state, conn = parts[0], parts[1], parts[2]
+            if state == "connected" and conn and conn != "--":
+                best = (dtype, conn)
+                if dtype == "wifi":
+                    break   # prefer wifi if several devices are up at once
+        if best:
+            dtype, conn = best
+            name = conn
+            icon = _NET_ICONS.get(dtype, "🌐")
     except Exception:
-        ssid = "—"
+        # nmcli not available — fall back to a plain wifi SSID check
+        try:
+            ssid = subprocess.check_output(["iwgetid", "-r"], timeout=1,
+                                           text=True).strip()
+            if ssid:
+                name, icon = ssid, "📶"
+        except Exception:
+            pass
     ip = "?"
     try:
         for line in subprocess.check_output(
@@ -112,7 +144,7 @@ def _wifi():
             break
     except Exception:
         pass
-    return f"  {ssid} {ip}"
+    return f"{icon} {name}  {ip}"
 
 
 def _battery():
@@ -168,7 +200,7 @@ class BottomBar(QWidget):
         self._stats = {
             "cpu": _cpu(), "mem": _mem_pct(), "disk": _disk_pct(),
             "net": _net(), "music": _music(), "uptime": _uptime(),
-            "wifi": _wifi(), "bat": bat_txt, "bat_pct": bat_pct,
+            "wifi": _network(), "bat": bat_txt, "bat_pct": bat_pct,
             "vol": _volume(),
         }
         self.update()

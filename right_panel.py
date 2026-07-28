@@ -1,11 +1,17 @@
 """right_panel.py — system stats shelf + app launcher / settings buttons"""
-import os, json, subprocess
-from PySide6.QtWidgets import QWidget, QPushButton, QVBoxLayout, QLabel
+import os, json, glob, shlex, subprocess
+from PySide6.QtWidgets import (
+    QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QLabel,
+    QLineEdit, QScrollArea,
+)
 from PySide6.QtCore import Qt, QTimer, QRect
 from PySide6.QtGui import QPainter, QColor, QFont, QPen, QFontMetrics
 
-CFG_DIR   = os.path.expanduser("~/.config/animated-wallpaper")
-APPS_JSON = os.path.join(CFG_DIR, "apps.json")
+from pipes_layer import PipesLayer
+
+CFG_DIR        = os.path.expanduser("~/.config/animated-wallpaper")
+APPS_JSON      = os.path.join(CFG_DIR, "apps.json")
+NET_IFACE_FILE = os.path.join(CFG_DIR, "net_iface")
 HERE      = os.path.dirname(os.path.abspath(__file__))
 
 DEFAULT_APPS = [
@@ -13,6 +19,64 @@ DEFAULT_APPS = [
     {"name": "Browser",  "cmd": "zen-browser"},
     {"name": "Files",    "cmd": "nautilus"},
 ]
+
+# Standard XDG locations for .desktop launchers — covers apps installed
+# system-wide, per-user, and via most package formats (deb/rpm/flatpak
+# exports here too).
+DESKTOP_DIRS = [
+    "/usr/share/applications",
+    "/usr/local/share/applications",
+    "/var/lib/flatpak/exports/share/applications",
+    os.path.expanduser("~/.local/share/flatpak/exports/share/applications"),
+    os.path.expanduser("~/.local/share/applications"),
+]
+
+_FIELD_CODES = {"%f", "%F", "%u", "%U", "%d", "%D", "%n", "%N",
+                 "%i", "%c", "%k", "%v", "%m"}
+
+
+def _clean_exec(exec_line):
+    """Strip desktop-entry field codes (%U, %f, ...) from an Exec= line."""
+    try:
+        parts = shlex.split(exec_line, posix=True)
+    except ValueError:
+        parts = exec_line.split()
+    return " ".join(p for p in parts if p not in _FIELD_CODES)
+
+
+def _scan_desktop_apps():
+    """Return every visible GUI app on the system, from .desktop files."""
+    seen = {}
+    for d in DESKTOP_DIRS:
+        for path in sorted(glob.glob(os.path.join(d, "*.desktop"))):
+            try:
+                name = exec_ = None
+                is_app, no_display = False, False
+                for line in open(path, encoding="utf-8", errors="ignore"):
+                    line = line.strip()
+                    if line == "[Desktop Entry]":
+                        is_app = True
+                        continue
+                    if line.startswith("[") and line != "[Desktop Entry]":
+                        break   # only read the main [Desktop Entry] group
+                    if not is_app:
+                        continue
+                    if line.startswith("Name=") and name is None:
+                        name = line.split("=", 1)[1].strip()
+                    elif line.startswith("Exec="):
+                        exec_ = line.split("=", 1)[1].strip()
+                    elif line.startswith("NoDisplay=true") or line.startswith("Hidden=true"):
+                        no_display = True
+                    elif line.startswith("Type=") and line.split("=", 1)[1].strip() != "Application":
+                        no_display = True
+                if no_display or not name or not exec_:
+                    continue
+                cmd = _clean_exec(exec_)
+                if cmd and name not in seen:
+                    seen[name] = cmd
+            except Exception:
+                continue
+    return [{"name": n, "cmd": c} for n, c in sorted(seen.items(), key=lambda kv: kv[0].lower())]
 
 BTN_QSS = """
     QPushButton {
@@ -25,13 +89,24 @@ BTN_QSS = """
 LBL_QSS = "color: #00ffc8; font: bold 9pt 'JetBrains Mono'; padding-top: 4px;"
 
 
-def _load_apps():
+def _load_pinned():
     try:
         return json.load(open(APPS_JSON))
     except Exception:
         os.makedirs(CFG_DIR, exist_ok=True)
         json.dump(DEFAULT_APPS, open(APPS_JSON, "w"), indent=2)
         return list(DEFAULT_APPS)
+
+
+def _load_apps():
+    """Pinned apps (apps.json) first, then every other installed GUI app."""
+    pinned = _load_pinned()
+    apps = list(pinned)
+    pinned_names = {a.get("name") for a in pinned}
+    for app in _scan_desktop_apps():
+        if app["name"] not in pinned_names:
+            apps.append(app)
+    return apps
 
 CYAN   = QColor(0, 212, 255)
 GREEN  = QColor(0, 255, 200)
@@ -135,14 +210,13 @@ class RightPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WA_TranslucentBackground)
+        self._pipes = PipesLayer(self)
         self._cpu   = 0.0
         self._mem_used = 0
         self._mem_total = 1
-        self._iface = "?"
-        self._rx = 0
-        self._tx = 0
         self._temp = None
         self._procs = []
+        self._stats_bottom = 200   # where painted stats end; dock is placed below this
 
         t = QTimer(self)
         t.timeout.connect(self._update_stats)
@@ -170,34 +244,100 @@ class RightPanel(QWidget):
             l = QLabel(text, self._dock)
             l.setStyleSheet(LBL_QSS)
             lay.addWidget(l)
+            return l
 
-        def button(text, cb, color="#c8dcff"):
-            b = QPushButton(text, self._dock)
+        def button(text, cb, color="#c8dcff", parent=None):
+            b = QPushButton(text, parent or self._dock)
             b.setCursor(Qt.PointingHandCursor)
             b.setStyleSheet(BTN_QSS % color)
             b.clicked.connect(cb)
-            lay.addWidget(b)
             return b
 
-        label("── APPS ──")
+        # ── APPS header + search, side by side ───────────────────
+        head = QWidget(self._dock)
+        head.setAttribute(Qt.WA_TranslucentBackground)
+        hl = QHBoxLayout(head)
+        hl.setContentsMargins(0, 0, 0, 0)
+        hl.setSpacing(6)
+        apps_lbl = QLabel("── APPS ──", head)
+        apps_lbl.setStyleSheet(LBL_QSS)
+        hl.addWidget(apps_lbl)
+        self._app_search = QLineEdit(head)
+        self._app_search.setPlaceholderText("🔍 search apps…")
+        self._app_search.setStyleSheet("""
+            QLineEdit {
+                color: #c8dcff; background: rgba(0, 30, 45, 150);
+                border: 1px solid #1a3a5a; border-radius: 3px;
+                font: 9pt 'JetBrains Mono'; padding: 3px 8px;
+            }
+            QLineEdit:focus { border-color: #00d4ff; }
+        """)
+        self._app_search.textChanged.connect(self._filter_apps)
+        hl.addWidget(self._app_search, 1)
+        lay.addWidget(head)
+
+        # ── Scrollable, searchable list of every installed GUI app ─
+        apps_holder = QWidget()
+        apps_holder.setAttribute(Qt.WA_TranslucentBackground)
+        apps_lay = QVBoxLayout(apps_holder)
+        apps_lay.setContentsMargins(0, 0, 4, 0)
+        apps_lay.setSpacing(4)
+
+        self._app_buttons = []   # (QPushButton, lowercase-name) for filtering
         for app in _load_apps():
+            name = app.get("name") or app.get("cmd", "")
             cmd = app.get("cmd", "")
-            button(f"▸ {app.get('name', cmd)}",
-                   lambda _=False, c=cmd: self._launch(c))
-        button("✚ Add app…", self._add_app, "#00ffc8")
+            b = button(f"▸ {name}", lambda _=False, c=cmd: self._launch(c),
+                       parent=apps_holder)
+            apps_lay.addWidget(b)
+            self._app_buttons.append((b, name.lower()))
+        apps_lay.addStretch(1)
+
+        # Show exactly 8 app rows; the rest scroll. Height is derived from
+        # the actual button size (not guessed), so it stays accurate
+        # regardless of font/DPI.
+        VISIBLE_APPS = 8
+        if self._app_buttons:
+            btn_h = self._app_buttons[0][0].sizeHint().height()
+        else:
+            btn_h = 26
+        list_h = VISIBLE_APPS * btn_h + (VISIBLE_APPS - 1) * apps_lay.spacing()
+
+        scroll = QScrollArea(self._dock)
+        scroll.setWidget(apps_holder)
+        scroll.setWidgetResizable(True)
+        scroll.setFixedHeight(list_h)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; }"
+                             " QWidget#qt_scrollarea_viewport { background: transparent; }")
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        lay.addWidget(scroll)
 
         label("── SETTINGS ──")
-        button("✎ Edit graph",   lambda: self._launch(os.path.join(HERE, "graph-edit.sh")))
-        button("♪ Audio mixer",  lambda: self._launch("pavucontrol"))
-        button("⇄ Wifi on/off",  self._toggle_wifi)
-        button("🔇 Mute on/off",  lambda: self._launch(
-            "pactl set-sink-mute @DEFAULT_SINK@ toggle"))
+        for b in (
+            button("✎ Edit graph",    lambda: self._launch(os.path.join(HERE, "graph-edit.sh"))),
+            button("♪ Audio mixer",   lambda: self._launch("pavucontrol")),
+            button("📶 Choose network…", self._choose_network),
+            button("⇄ Wifi radio on/off", self._toggle_wifi),
+            button("🔇 Mute on/off",   lambda: self._launch(
+                "pactl set-sink-mute @DEFAULT_SINK@ toggle")),
+        ):
+            lay.addWidget(b)
         self._redshift_btn = button("", self._toggle_redshift, "#ffc800")
+        lay.addWidget(self._redshift_btn)
         self._update_redshift_label()
-        button("⚙ Config folder", lambda: self._launch(f"xdg-open {CFG_DIR}"))
-        button("⟳ Restart deck", self._restart_deck, "#ffc800")
+        for b in (
+            button("⚙ Config folder", lambda: self._launch(f"xdg-open {CFG_DIR}")),
+            button("⟳ Restart deck",  self._restart_deck, "#ffc800"),
+        ):
+            lay.addWidget(b)
 
         self._dock.adjustSize()
+
+    def _filter_apps(self, text):
+        needle = text.strip().lower()
+        for btn, name_lower in self._app_buttons:
+            btn.setVisible(needle in name_lower)
 
     def _launch(self, cmd):
         if cmd:
@@ -209,6 +349,36 @@ class RightPanel(QWidget):
             'state=$(nmcli radio wifi); '
             'if [ "$state" = "enabled" ]; then nmcli radio wifi off; '
             'else nmcli radio wifi on; fi')
+
+    def _choose_network(self):
+        # Lists every saved connection (wifi, ethernet, mobile broadband /
+        # modem — anything NetworkManager knows about) plus nearby wifi
+        # networks that aren't saved yet, via rofi. Picking a saved
+        # connection just brings it up; picking a new SSID prompts for a
+        # password (leave blank for open networks) and connects to it.
+        script = r'''
+sel=$( { nmcli -t -f NAME,TYPE connection show 2>/dev/null \
+           | awk -F: '{printf "%s  [%s]\n", $1, $2}';
+         nmcli -t -f SSID,SIGNAL dev wifi list 2>/dev/null \
+           | awk -F: '$1!="" {printf "%s  (wifi %s%%)\n", $1, $2}'; } \
+       | sort -u \
+       | rofi -dmenu -p "Connect to:" -i )
+[ -z "$sel" ] && exit 0
+name=$(echo "$sel" | sed -E 's/  \[[^]]*\]$//; s/  \(wifi[^)]*\)$//')
+if nmcli -t -f NAME connection show | grep -Fxq "$name"; then
+    # Saved connection — works the same for wifi, ethernet, or a modem
+    nmcli connection up id "$name"
+else
+    pass=$(rofi -dmenu -p "Password (blank = open network):" -password </dev/null)
+    if [ -z "$pass" ]; then
+        nmcli device wifi connect "$name"
+    else
+        nmcli device wifi connect "$name" password "$pass"
+    fi
+fi
+'''
+        subprocess.Popen(["bash", "-c", script], start_new_session=True,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     # redshift toggle: reading mode (warm 5000K) <-> normal (-x)
     _REDSHIFT_FLAG = os.path.join(CFG_DIR, "redshift.on")
@@ -232,22 +402,6 @@ class RightPanel(QWidget):
                          start_new_session=True,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    def _add_app(self):
-        # rofi prompts run in a detached shell so the deck's event loop
-        # never blocks; the mtime watcher rebuilds the dock afterwards.
-        script = (
-            'name=$(rofi -dmenu -p "App name:" </dev/null); '
-            '[ -z "$name" ] && exit 0; '
-            'cmd=$(rofi -dmenu -p "Command:" </dev/null); '
-            '[ -z "$cmd" ] && exit 0; '
-            f'python3 -c "import json; f={APPS_JSON!r}; '
-            'a=json.load(open(f)); '
-            "a.append({'name': __import__('sys').argv[1], 'cmd': __import__('sys').argv[2]}); "
-            'json.dump(a, open(f, \'w\'), indent=2)" "$name" "$cmd"'
-        )
-        subprocess.Popen(["bash", "-c", script], start_new_session=True,
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
     def _check_apps_changed(self):
         try:
             mt = os.path.getmtime(APPS_JSON)
@@ -263,8 +417,13 @@ class RightPanel(QWidget):
     def _place_dock(self):
         self._dock.adjustSize()
         dw = self.width() - 24
-        self._dock.setGeometry(12, self.height() - self._dock.height() - 12,
-                               dw, self._dock.height())
+        # Prefer anchoring to the bottom (original look), but never let the
+        # dock creep up higher than the painted stats block actually ends —
+        # this is what caused "QUICK KEYS" to overlap the app search box.
+        bottom_anchor = self.height() - self._dock.height() - 12
+        top_anchor    = self._stats_bottom + 10
+        y = max(bottom_anchor, top_anchor)
+        self._dock.setGeometry(12, y, dw, self._dock.height())
 
     def resizeEvent(self, e):
         self._place_dock()
@@ -273,7 +432,6 @@ class RightPanel(QWidget):
     def _update_stats(self):
         self._cpu          = _cpu_percent()
         self._mem_used, self._mem_total = _mem()
-        self._iface, self._rx, self._tx = _net_speed()
         self._temp         = _cpu_temp()
         self._procs        = _top_procs(10)
         self.update()
@@ -303,6 +461,9 @@ class RightPanel(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         W, H = self.width(), self.height()
         # no fill — shared bluish background comes from the deck window
+
+        # ── Bottom layer: animated pipes texture (also runs in left_panel.py) ──
+        self._pipes.paint(p)
 
         x   = 12
         bw  = W - 24
@@ -357,15 +518,6 @@ class RightPanel(QWidget):
 
         p.setPen(QPen(DIM, 1)); p.drawLine(x, y, x + bw, y); y += 10
 
-        # ── Network ──────────────────────────────────────────────
-        y = self._section(p, x, y, W, "NETWORK")
-        p.setFont(sm)
-        p.setPen(WHITE);  p.drawText(x, y + 12, f"iface: {self._iface}")
-        p.setPen(GREEN);  p.drawText(x, y + 26, f"↓ {self._rx} KB/s")
-        p.setPen(CYAN);   p.drawText(x + 100, y + 26, f"↑ {self._tx} KB/s")
-        y += 40
-        p.setPen(QPen(DIM, 1)); p.drawLine(x, y, x + bw, y); y += 10
-
         # ── Top processes ─────────────────────────────────────────
         y = self._section(p, x, y, W, "TOP PROCESSES")
         p.setFont(QFont("JetBrains Mono", 8))
@@ -400,5 +552,9 @@ class RightPanel(QWidget):
             p.setPen(CYAN);  p.drawText(x, y + 11, k)
             p.setPen(DIM);   p.drawText(x + 130, y + 11, f"» {v}")
             y += 13
+
+        if abs(y - self._stats_bottom) > 1:
+            self._stats_bottom = y
+            self._place_dock()
 
         p.end()
