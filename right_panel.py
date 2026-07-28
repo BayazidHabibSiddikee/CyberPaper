@@ -273,12 +273,16 @@ class RightPanel(QWidget):
             QLineEdit:focus { border-color: #00d4ff; }
         """)
         self._app_search.textChanged.connect(self._filter_apps)
+        # The deck window is override-redirect, so X never focuses it on its
+        # own — grab/release X input focus when the box is clicked/left.
+        self._app_search.installEventFilter(self)
         hl.addWidget(self._app_search, 1)
         lay.addWidget(head)
 
         # ── Scrollable, searchable list of every installed GUI app ─
         apps_holder = QWidget()
-        apps_holder.setAttribute(Qt.WA_TranslucentBackground)
+        apps_holder.setAutoFillBackground(False)
+        apps_holder.setStyleSheet("background: transparent;")
         apps_lay = QVBoxLayout(apps_holder)
         apps_lay.setContentsMargins(0, 0, 4, 0)
         apps_lay.setSpacing(4)
@@ -308,9 +312,10 @@ class RightPanel(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setFixedHeight(list_h)
         scroll.setFrameShape(QScrollArea.NoFrame)
-        scroll.setStyleSheet("QScrollArea { background: transparent; }"
-                             " QWidget#qt_scrollarea_viewport { background: transparent; }")
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        scroll.viewport().setStyleSheet("background: transparent;")
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._app_scroll = scroll
         lay.addWidget(scroll)
 
         label("── SETTINGS ──")
@@ -334,10 +339,50 @@ class RightPanel(QWidget):
 
         self._dock.adjustSize()
 
+    # ── X input focus for the search box ─────────────────────────
+    # The deck is an override-redirect window: i3 never assigns keyboard
+    # focus to it, so a plain QLineEdit receives clicks but no keystrokes.
+    def _grab_x_focus(self):
+        try:
+            import Xlib.display, Xlib.X
+            d = Xlib.display.Display()
+            w = d.create_resource_object("window", int(self.window().winId()))
+            w.set_input_focus(Xlib.X.RevertToPointerRoot, Xlib.X.CurrentTime)
+            d.sync()
+            d.close()
+        except Exception:
+            pass
+
+    def _release_x_focus(self):
+        try:
+            import Xlib.display, Xlib.X
+            d = Xlib.display.Display()
+            d.set_input_focus(Xlib.X.PointerRoot,
+                              Xlib.X.RevertToPointerRoot, Xlib.X.CurrentTime)
+            d.sync()
+            d.close()
+        except Exception:
+            pass
+
+    def eventFilter(self, obj, e):
+        if obj is self._app_search:
+            from PySide6.QtCore import QEvent
+            if e.type() == QEvent.MouseButtonPress:
+                self._grab_x_focus()
+                self._app_search.setFocus(Qt.MouseFocusReason)
+            elif e.type() == QEvent.KeyPress and e.key() == Qt.Key_Escape:
+                self._app_search.clearFocus()
+                self._release_x_focus()
+                return True
+            elif e.type() == QEvent.FocusOut:
+                self._release_x_focus()
+        return super().eventFilter(obj, e)
+
     def _filter_apps(self, text):
         needle = text.strip().lower()
         for btn, name_lower in self._app_buttons:
-            btn.setVisible(needle in name_lower)
+            btn.setVisible(not needle or needle in name_lower)
+        self._app_scroll.verticalScrollBar().setValue(0)
 
     def _launch(self, cmd):
         if cmd:

@@ -7,7 +7,7 @@ floating conky panels, no xwinwrap fights with i3.
 
 Usage:  python3 cyberdeck.py [--screen WxH]
 """
-import sys, os, signal, subprocess, argparse
+import sys, os, signal, subprocess, argparse, Xlib, Xlib.display, Xlib.Xatom
 
 # Allow running from any directory
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -21,6 +21,23 @@ from main_panel   import MainPanel
 from right_panel  import RightPanel
 from bottom_bar   import BottomBar
 from spectrum_overlay import SpectrumOverlay
+
+
+def setup_x11_below(wid):
+    """Set window as _NET_WM_STATE_BELOW — above desktop layer, below apps."""
+    d = Xlib.display.Display()
+    w = d.create_resource_object('window', wid)
+    w.change_property(
+        d.intern_atom('_NET_WM_STATE'),
+        Xlib.Xatom.ATOM, 32,
+        [
+            d.intern_atom('_NET_WM_STATE_BELOW'),
+            d.intern_atom('_NET_WM_STATE_SKIP_TASKBAR'),
+            d.intern_atom('_NET_WM_STATE_SKIP_PAGER'),
+        ]
+    )
+    d.sync()
+
 
 # Column width percentages
 LEFT_PCT   = 28
@@ -61,10 +78,11 @@ class CyberDeck(QWidget):
         self.setGeometry(0, 0, sw, sh)
         self.setWindowTitle("cyberdeck")
 
-        # Keep the window at the bottom of the X stacking order (new windows
-        # always map above, so re-lower periodically; glava lowers itself too)
+        # Keep the window at the bottom of the X stacking order.
+        # Override-redirect windows aren't managed by the WM, so we must
+        # periodically lower ourselves to stay below all normal windows.
         self._lower_timer = QTimer(self)
-        self._lower_timer.timeout.connect(self.lower)
+        self._lower_timer.timeout.connect(self._lower_below)
         self._lower_timer.start(1000)
 
         # ── Layout ────────────────────────────────────────────────
@@ -146,6 +164,32 @@ class CyberDeck(QWidget):
         except Exception:
             pass
 
+    def _lower_below(self):
+        """Ensure correct stacking: glava (DESKTOP) < cyberdeck (BELOW) < apps."""
+        self.lower()
+        # Set glava to DESKTOP type — absolute bottom layer
+        try:
+            wid_out = subprocess.check_output(
+                ["xdotool", "search", "--class", "GLava"],
+                timeout=2, text=True,
+            ).strip().split("\n")[0]
+            if wid_out:
+                subprocess.run(
+                    ["xprop", "-id", wid_out,
+                     "-f", "_NET_WM_WINDOW_TYPE", "32a",
+                     "-set", "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_DESKTOP"],
+                    timeout=2, capture_output=True,
+                )
+                subprocess.run(
+                    ["xprop", "-id", wid_out,
+                     "-f", "_NET_WM_STATE", "32a",
+                     "-set", "_NET_WM_STATE",
+                     "_NET_WM_STATE_BELOW,_NET_WM_STATE_SKIP_TASKBAR,_NET_WM_STATE_SKIP_PAGER"],
+                    timeout=2, capture_output=True,
+                )
+        except Exception:
+            pass
+
     def paintEvent(self, _):
         # Solid dark fill behind everything (panels + spectrum overlay sit
         # on top of this same flat background).
@@ -157,6 +201,18 @@ class CyberDeck(QWidget):
         # Ctrl+C / Escape quit
         if e.key() in (Qt.Key_Escape,) and e.modifiers() & Qt.ControlModifier:
             QApplication.quit()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        QTimer.singleShot(300, self._apply_x11)
+
+    def _apply_x11(self):
+        wid = int(self.winId())
+        try:
+            setup_x11_below(wid)
+            print(f"[cyberdeck] X11 BELOW hints applied (window {wid})")
+        except Exception as e:
+            print(f"[cyberdeck] X11 error: {e}")
 
 
 def main():

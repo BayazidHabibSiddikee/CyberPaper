@@ -38,9 +38,21 @@ class AudioThread(QThread):
 
     def run(self):
         try:
+            # Record what's PLAYING (the default sink's monitor), not the
+            # microphone — parec with no -d captures the default source.
+            monitor = None
+            try:
+                sink = subprocess.check_output(
+                    ["pactl", "get-default-sink"], timeout=2, text=True).strip()
+                if sink:
+                    monitor = sink + ".monitor"
+            except Exception:
+                pass
+            cmd = ["parec", "--format=float32le", "--rate=44100", "--channels=1"]
+            if monitor:
+                cmd += ["-d", monitor]
             proc = subprocess.Popen(
-                ["parec", "--format=float32le", "--rate=44100", "--channels=1"],
-                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             )
             while self._run:
                 raw = proc.stdout.read(self.n * 4)
