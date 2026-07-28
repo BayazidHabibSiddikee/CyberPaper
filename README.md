@@ -4,20 +4,20 @@ A PySide6-powered animated desktop overlay that replaces your wallpaper with a f
 
 ## Screenshots
 
-### Full Desktop — Glava Audio Visualizer + Cyberdeck
-![Full Desktop](screenshots/1785180506.png)
-
-Glava audio visualizer runs as the absolute bottom layer, with the cyberdeck panels on top. All normal windows (browsers, terminals, etc.) appear above everything.
-
-### Cyberdeck — Mission Graph + System Stats
+### Cyberdeck with Glava Audio Visualizer
 ![Cyberdeck](screenshots/1785180719.png)
 
-The main cyberdeck interface with clock, mission graph editor, system stats, app launcher, and quick settings.
+The cyberdeck with clock, mission graph, system stats, app launcher, and glava audio visualizer running at the bottom. Everything layers behind your apps.
 
 ### Real-World Usage — Apps Over Cyberdeck
 ![Apps Over Cyberdeck](screenshots/1785180803.png)
 
 Normal applications (YouTube, terminals) open on top of the cyberdeck while glava audio visualizer remains visible at the bottom edge.
+
+### Full Desktop with File Manager
+![Full Desktop](screenshots/1785180506.png)
+
+File manager open over the cyberdeck — glava visualizer visible at the bottom, cyberdeck panels behind the app.
 
 ## Window Stacking Order
 
