@@ -90,6 +90,49 @@ stop() {
     pkill -x glava 2>/dev/null
 }
 
+toggle_glava() {
+    if [ -f "$GLAVA_PID_FILE" ] && kill -0 "$(cat "$GLAVA_PID_FILE")" 2>/dev/null; then
+        # Glava is running — stop it
+        kill "$(cat "$GLAVA_PID_FILE")" 2>/dev/null
+        rm -f "$GLAVA_PID_FILE"
+        pkill -x glava 2>/dev/null
+        echo "glava stopped"
+    else
+        # Glava is not running — start it
+        if command -v glava >/dev/null; then
+            res="$(screen_size)"; res="${res:-1920x1080}"
+            sw="${res%x*}"; sh="${res#*x}"
+            gw=$sw
+            gh=$(( sh * 22 / 100 ))
+            gy=$(( sh - BOTTOM_H - gh ))
+            nohup glava --desktop -m graph \
+                -r setgeometry\ 0\ $gy\ $gw\ $gh \
+                > "$CFG_DIR/glava.log" 2>&1 &
+            GLAVA_PID=$!
+            echo $GLAVA_PID > "$GLAVA_PID_FILE"
+
+            for i in $(seq 1 20); do
+                sleep 0.1
+                WID=$(xdotool search --class "GLava" 2>/dev/null | head -1)
+                [ -n "$WID" ] && break
+            done
+            if [ -n "$WID" ]; then
+                xprop -id "$WID" \
+                    -f _NET_WM_WINDOW_TYPE 32a \
+                    -set _NET_WM_WINDOW_TYPE "_NET_WM_WINDOW_TYPE_DESKTOP" \
+                    2>/dev/null
+                xprop -id "$WID" \
+                    -f _NET_WM_STATE 32a \
+                    -set _NET_WM_STATE "_NET_WM_STATE_BELOW,_NET_WM_STATE_SKIP_TASKBAR,_NET_WM_STATE_SKIP_PAGER" \
+                    2>/dev/null
+            fi
+            echo "glava started (PID $GLAVA_PID)"
+        else
+            echo "glava not installed"
+        fi
+    fi
+}
+
 status() {
     if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
         echo "running (PID $(cat "$PID_FILE"))"
@@ -104,5 +147,6 @@ case "${1:-start}" in
     restart) stop; sleep 1; start ;;
     status)  status ;;
     edit)    "$HERE/graph-edit.sh" ;;
-    *) echo "Usage: cyberdesk.sh [start|stop|restart|status|edit]"; exit 1 ;;
+    glava-toggle) toggle_glava ;;
+    *) echo "Usage: cyberdesk.sh [start|stop|restart|status|edit|glava-toggle]"; exit 1 ;;
 esac

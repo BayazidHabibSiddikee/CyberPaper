@@ -15,7 +15,7 @@ NET_IFACE_FILE = os.path.join(CFG_DIR, "net_iface")
 HERE      = os.path.dirname(os.path.abspath(__file__))
 
 DEFAULT_APPS = [
-    {"name": "Terminal", "cmd": "alacritty"},
+    {"name": "Terminal", "cmd": "ghostty"},
     {"name": "Browser",  "cmd": "zen-browser"},
     {"name": "Files",    "cmd": "nautilus"},
 ]
@@ -220,7 +220,7 @@ class RightPanel(QWidget):
 
         t = QTimer(self)
         t.timeout.connect(self._update_stats)
-        t.start(2000)
+        t.start(2500)  # stats every 2.5s (was 2s)
         self._update_stats()
 
         self._build_dock()
@@ -320,20 +320,23 @@ class RightPanel(QWidget):
 
         label("── SETTINGS ──")
         for b in (
-            button("✎ Edit graph",    lambda: self._launch(os.path.join(HERE, "graph-edit.sh"))),
-            button("♪ Audio mixer",   lambda: self._launch("pavucontrol")),
-            button("📶 Choose network…", self._choose_network),
-            button("⇄ Wifi radio on/off", self._toggle_wifi),
-            button("🔇 Mute on/off",   lambda: self._launch(
+            button("  Edit graph",    lambda: self._launch(os.path.join(HERE, "graph-edit.sh"))),
+            button("  Audio mixer",   lambda: self._launch("pavucontrol")),
+            button("  Choose network…", self._choose_network),
+            button("  Wifi radio on/off", self._toggle_wifi),
+            button("  Mute on/off",   lambda: self._launch(
                 "pactl set-sink-mute @DEFAULT_SINK@ toggle")),
         ):
             lay.addWidget(b)
-        self._redshift_btn = button("", self._toggle_redshift, "#ffc800")
+        self._redshift_btn = button("", self._toggle_redshift, "#e5c07b")
         lay.addWidget(self._redshift_btn)
         self._update_redshift_label()
+        self._glava_btn = button("", self._toggle_glava, "#c678dd")
+        lay.addWidget(self._glava_btn)
+        self._update_glava_label()
         for b in (
-            button("⚙ Config folder", lambda: self._launch(f"xdg-open {CFG_DIR}")),
-            button("⟳ Restart deck",  self._restart_deck, "#ffc800"),
+            button("  Config folder", lambda: self._launch(f"xdg-open {CFG_DIR}")),
+            button("  Restart deck",  self._restart_deck, "#e5c07b"),
         ):
             lay.addWidget(b)
 
@@ -431,7 +434,7 @@ fi
     def _update_redshift_label(self):
         on = os.path.exists(self._REDSHIFT_FLAG)
         self._redshift_btn.setText(
-            "☀ Normal colors" if on else "☾ Reading mode (5000K)")
+            "☀ Normal colors" if on else "  Reading mode (5000K)")
 
     def _toggle_redshift(self):
         if os.path.exists(self._REDSHIFT_FLAG):
@@ -441,6 +444,32 @@ fi
             self._launch("redshift -O 5000")
             open(self._REDSHIFT_FLAG, "w").close()
         self._update_redshift_label()
+
+    # glava toggle: start/stop audio visualizer
+    _GLAVA_PID_FILE = os.path.join(CFG_DIR, "glava.pid")
+
+    def _update_glava_label(self):
+        running = os.path.exists(self._GLAVA_PID_FILE) and \
+                  os.path.isfile(self._GLAVA_PID_FILE)
+        if running:
+            try:
+                pid = int(open(self._GLAVA_PID_FILE).read().strip())
+                import signal
+                os.kill(pid, 0)  # check if alive
+                self._glava_btn.setText("  Audio Visualizer: ON")
+                return
+            except (ValueError, ProcessLookupError, PermissionError):
+                pass
+        self._glava_btn.setText("  Audio Visualizer: OFF")
+
+    def _toggle_glava(self):
+        subprocess.Popen(
+            [os.path.join(HERE, "cyberdesk.sh"), "glava-toggle"],
+            start_new_session=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        # Wait a moment for glava to start/stop, then update label
+        QTimer.singleShot(500, self._update_glava_label)
 
     def _restart_deck(self):
         subprocess.Popen([os.path.join(HERE, "cyberdesk.sh"), "restart"],
@@ -478,7 +507,10 @@ fi
         self._cpu          = _cpu_percent()
         self._mem_used, self._mem_total = _mem()
         self._temp         = _cpu_temp()
-        self._procs        = _top_procs(10)
+        # Top processes: only update every 5s (every 2nd call at 2500ms interval)
+        self._stats_counter = getattr(self, '_stats_counter', 0) + 1
+        if self._stats_counter % 2 == 0:
+            self._procs = _top_procs(10)
         self.update()
 
     # ── helpers ──────────────────────────────────────────────────
@@ -486,7 +518,14 @@ fi
         p.setPen(QPen(DIM, 1))
         p.drawRect(x, y, bw, bh)
         fill = int(bw * min(pct, 100) / 100)
-        p.fillRect(x + 1, y + 1, max(0, fill - 2), bh - 1, color)
+        # Segmented LCD/LED bar effect
+        seg_w = 4
+        seg_gap = 1
+        seg_x = x + 1
+        while seg_x < x + 1 + fill - seg_gap:
+            seg_fill_w = min(seg_w, x + 1 + fill - seg_gap - seg_x)
+            p.fillRect(seg_x, y + 1, seg_fill_w, bh - 1, color)
+            seg_x += seg_w + seg_gap
 
     def _section(self, p, x, y, w, label):
         p.setPen(QPen(DIM, 1))

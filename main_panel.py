@@ -12,7 +12,7 @@ full width along the bottom.
 import os, json, subprocess
 from datetime import datetime
 from PySide6.QtWidgets import QWidget, QPushButton
-from PySide6.QtCore import Qt, QTimer, QRect
+from PySide6.QtCore import Qt, QTimer, QRect, QFileSystemWatcher
 from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QFontMetrics, QPen
 
 from pipes_layer import PipesLayer
@@ -42,8 +42,12 @@ class MainPanel(QWidget):
         self._edges = 0
         self._load_graph()
 
-        t1 = QTimer(self); t1.timeout.connect(self.update);       t1.start(1000)
-        t2 = QTimer(self); t2.timeout.connect(self._check_graph); t2.start(3000)
+        # Clock: update every 1000ms
+        t1 = QTimer(self); t1.timeout.connect(self.update); t1.start(1000)
+
+        # Graph: watch for file changes via QFileSystemWatcher (no polling)
+        self._graph_watcher = QFileSystemWatcher([GRAPH_PNG, GRAPH_JSON], self)
+        self._graph_watcher.fileChanged.connect(self._on_graph_changed)
 
         self._edit_btn = QPushButton("✚ EDIT GRAPH", self)
         self._edit_btn.setCursor(Qt.PointingHandCursor)
@@ -68,10 +72,8 @@ class MainPanel(QWidget):
 
     def _load_graph(self):
         try:
-            mt = os.path.getmtime(GRAPH_PNG)
-            if mt != self._mtime:
-                self._mtime = mt
-                self._px = QPixmap(GRAPH_PNG)
+            self._px = QPixmap(GRAPH_PNG)
+            self._mtime = os.path.getmtime(GRAPH_PNG)
         except Exception:
             self._px = None
         try:
@@ -81,12 +83,11 @@ class MainPanel(QWidget):
         except Exception:
             pass
 
-    def _check_graph(self):
-        try:
-            if os.path.getmtime(GRAPH_PNG) != self._mtime:
-                self._load_graph(); self.update()
-        except Exception:
-            pass
+    def _on_graph_changed(self, path):
+        """Called by QFileSystemWatcher when graph.png or graph.json changes."""
+        self._load_graph()
+        self.update()
+
 
     def paintEvent(self, _):
         p = QPainter(self)

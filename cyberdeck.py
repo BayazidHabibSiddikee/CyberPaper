@@ -139,30 +139,7 @@ class CyberDeck(QWidget):
         if self._spectrum is not None:
             self._spectrum.raise_()
 
-        # ── Also render a dark graph background render trigger ────
-        # Re-render graph PNG every 10s if graph.json changed
-        self._graph_timer = QTimer(self)
-        self._graph_timer.timeout.connect(self._maybe_render_graph)
-        self._graph_timer.start(10_000)
-        self._graph_mtime = 0
-
-    def _maybe_render_graph(self):
-        cfg = os.path.expanduser("~/.config/animated-wallpaper")
-        jf  = os.path.join(cfg, "graph.json")
-        try:
-            mt = os.path.getmtime(jf)
-            if mt != self._graph_mtime:
-                self._graph_mtime = mt
-                script = os.path.join(HERE, "graph-render.sh")
-                rw = self.SW * RIGHT_PCT // 100
-                gw = self.SW - rw   # combined left+center width
-                gh = self.SH - BOTTOM_H
-                subprocess.Popen(
-                    [script, str(gw), str(gh)],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-                )
-        except Exception:
-            pass
+        # ── Graph render triggered only by graph-edit.sh (no polling) ──
 
     def _lower_below(self):
         """Ensure correct stacking: glava (DESKTOP) < cyberdeck (BELOW) < apps."""

@@ -22,25 +22,26 @@ mkdir -p "$CFG_DIR"
 
 jq -r '
   def color(status):
-    if status == "done"        then "#50ff78"
-    elif status == "in-progress" then "#ffc800"
-    elif status == "blocked"   then "#ff465a"
-    else "#00b4ff" end;
+    if status == "done"        then "#98c379"
+    elif status == "in-progress" then "#e5c07b"
+    elif status == "blocked"   then "#e06c75"
+    else "#61afef" end;
 
   def fillcolor(status):
-    if status == "done"        then "#50ff7830"
-    elif status == "in-progress" then "#ffc80030"
-    elif status == "blocked"   then "#ff465a30"
-    else "#00b4ff30" end;
+    if status == "done"        then "#98c37925"
+    elif status == "in-progress" then "#e5c07b25"
+    elif status == "blocked"   then "#e06c7525"
+    else "#61afef25" end;
 
   "digraph G {",
   "  layout=neato;",
   "  overlap=false;",
-  "  splines=true;",
+  "  splines=ortho;",
   "  bgcolor=\"transparent\";",
-  "  node [shape=box style=\"filled,rounded\" fontname=\"monospace\" fontsize=12",
-  "        fontcolor=\"#e6ebff\" penwidth=2 margin=0.2];",
-  "  edge [color=\"#00c8ff88\" penwidth=1.8 arrowsize=0.8];",
+  "  node [shape=box style=\"filled,rounded\" fontname=\"JetBrainsMono Nerd Font\" fontsize=11",
+  "        fontcolor=\"#abb2bf\" penwidth=1.5 margin=0.15",
+  "        fillcolor=\"#3e445180\" color=\"#3e4451\"];",
+  "  edge [color=\"#3e445188\" penwidth=1.2 arrowsize=0.6 arrowhead=vee];",
   (.nodes[] | "  \"\(.id)\" [label=\"\(.label)\", fillcolor=\"\(fillcolor(.status))\", color=\"\(color(.status))\"];"),
   (if .edges then (.edges[] | "  \"\(.from)\" -> \"\(.to)\";") else empty end),
   "}"
