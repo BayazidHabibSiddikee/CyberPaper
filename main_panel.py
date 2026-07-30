@@ -21,10 +21,10 @@ CFG_DIR    = os.path.expanduser("~/.config/animated-wallpaper")
 GRAPH_PNG  = os.path.join(CFG_DIR, "graph.png")
 GRAPH_JSON = os.path.join(CFG_DIR, "graph.json")
 
-CYAN  = QColor(0, 212, 255)
-GREEN = QColor(0, 255, 200)
-DIM   = QColor(26, 58, 90)
-WHITE = QColor(220, 235, 255)
+CYAN  = QColor(97, 175, 239)    # One Dark blue
+GREEN = QColor(152, 195, 121)   # One Dark green
+DIM   = QColor(62, 68, 81)      # One Dark dark gray
+WHITE = QColor(171, 178, 191)   # One Dark foreground
 
 
 class MainPanel(QWidget):
@@ -49,11 +49,11 @@ class MainPanel(QWidget):
         self._edit_btn.setCursor(Qt.PointingHandCursor)
         self._edit_btn.setStyleSheet("""
             QPushButton {
-                color: #00ffc8; background: rgba(0, 40, 50, 160);
-                border: 1px solid #1a3a5a; border-radius: 3px;
+                color: #98c379; background: rgba(62, 68, 81, 160);
+                border: 1px solid #3e4451; border-radius: 3px;
                 font: bold 9pt 'JetBrains Mono'; padding: 3px 10px;
             }
-            QPushButton:hover { background: rgba(0, 80, 100, 200); border-color: #00d4ff; }
+            QPushButton:hover { background: rgba(97, 175, 239, 200); border-color: #61afef; }
         """)
         self._edit_btn.clicked.connect(self._edit_graph)
 

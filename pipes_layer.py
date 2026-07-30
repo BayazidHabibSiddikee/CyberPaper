@@ -19,8 +19,12 @@ PIPE_CHARS = {
     'cross': '╋',
 }
 PIPE_COLORS = [
-    QColor(0, 212, 255), QColor(0, 255, 200), QColor(0, 255, 100),
-    QColor(255, 200, 0), QColor(255, 100, 0), QColor(200, 0, 255),
+    QColor(97, 175, 239),    # One Dark blue
+    QColor(152, 195, 121),   # One Dark green
+    QColor(229, 192, 123),   # One Dark yellow
+    QColor(198, 120, 221),   # One Dark purple
+    QColor(86, 182, 194),    # One Dark cyan
+    QColor(224, 108, 117),   # One Dark red
 ]
 
 

@@ -12,14 +12,14 @@ from PySide6.QtWidgets import QWidget
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QPainter, QColor, QFont, QFontMetrics
 
-CYAN  = QColor(144, 220, 255)
-GREEN = QColor(150, 240, 200)
-AMBER = QColor(255, 200, 0)
-RED   = QColor(255, 70, 70)
-DIM   = QColor(42, 90, 122)
-WHITE = QColor(220, 235, 255)
-BG    = QColor(2, 6, 18, 255)
-WS_BG = QColor(0, 60, 80, 255)
+CYAN  = QColor(97, 175, 239)    # One Dark blue
+GREEN = QColor(152, 195, 121)   # One Dark green
+AMBER = QColor(229, 192, 123)   # One Dark yellow
+RED   = QColor(224, 108, 117)   # One Dark red
+DIM   = QColor(62, 68, 81)      # One Dark dark gray
+WHITE = QColor(171, 178, 191)   # One Dark foreground
+BG    = QColor(40, 44, 52, 255) # One Dark bg
+WS_BG = QColor(62, 68, 81, 255) # One Dark dark gray for workspace bg
 
 
 def _cpu():

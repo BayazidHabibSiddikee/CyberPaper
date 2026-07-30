@@ -194,7 +194,7 @@ class CyberDeck(QWidget):
         # Solid dark fill behind everything (panels + spectrum overlay sit
         # on top of this same flat background).
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor(2, 6, 18, 255))
+        p.fillRect(self.rect(), QColor(40, 44, 52, 255))
         p.end()
 
     def keyPressEvent(self, e):

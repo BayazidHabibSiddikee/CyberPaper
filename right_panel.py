@@ -80,13 +80,13 @@ def _scan_desktop_apps():
 
 BTN_QSS = """
     QPushButton {
-        color: %s; background: rgba(0, 30, 45, 150); text-align: left;
-        border: 1px solid #1a3a5a; border-radius: 3px;
+        color: %s; background: rgba(62, 68, 81, 150); text-align: left;
+        border: 1px solid #3e4451; border-radius: 3px;
         font: bold 9pt 'JetBrains Mono'; padding: 4px 10px;
     }
-    QPushButton:hover { background: rgba(0, 80, 100, 210); border-color: #00d4ff; }
+    QPushButton:hover { background: rgba(97, 175, 239, 210); border-color: #61afef; }
 """
-LBL_QSS = "color: #00ffc8; font: bold 9pt 'JetBrains Mono'; padding-top: 4px;"
+LBL_QSS = "color: #98c379; font: bold 9pt 'JetBrains Mono'; padding-top: 4px;"
 
 
 def _load_pinned():
@@ -108,13 +108,13 @@ def _load_apps():
             apps.append(app)
     return apps
 
-CYAN   = QColor(0, 212, 255)
-GREEN  = QColor(0, 255, 200)
-AMBER  = QColor(255, 200, 0)
-RED    = QColor(255, 70, 90)
-DIM    = QColor(26, 58, 90)
-WHITE  = QColor(200, 220, 255)
-BG     = QColor(2, 5, 16, 215)
+CYAN   = QColor(97, 175, 239)    # One Dark blue
+GREEN  = QColor(152, 195, 121)   # One Dark green
+AMBER  = QColor(229, 192, 123)   # One Dark yellow
+RED    = QColor(224, 108, 117)   # One Dark red
+DIM    = QColor(62, 68, 81)      # One Dark dark gray
+WHITE  = QColor(171, 178, 191)   # One Dark foreground
+BG     = QColor(40, 44, 52, 215) # One Dark bg with alpha
 
 
 def _read(path, default="0"):
@@ -266,11 +266,11 @@ class RightPanel(QWidget):
         self._app_search.setPlaceholderText("🔍 search apps…")
         self._app_search.setStyleSheet("""
             QLineEdit {
-                color: #c8dcff; background: rgba(0, 30, 45, 150);
-                border: 1px solid #1a3a5a; border-radius: 3px;
+                color: #abb2bf; background: rgba(62, 68, 81, 150);
+                border: 1px solid #3e4451; border-radius: 3px;
                 font: 9pt 'JetBrains Mono'; padding: 3px 8px;
             }
-            QLineEdit:focus { border-color: #00d4ff; }
+            QLineEdit:focus { border-color: #61afef; }
         """)
         self._app_search.textChanged.connect(self._filter_apps)
         # The deck window is override-redirect, so X never focuses it on its

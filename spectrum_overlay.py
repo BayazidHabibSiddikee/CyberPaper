@@ -16,8 +16,8 @@ from PySide6.QtGui import QPainter, QColor, QLinearGradient
 # Cyan, matching the previous `glava --desktop -m graph` look — a single
 # hue rather than the hue-cycling rainbow, so it reads as one coherent
 # glow rising up from the baseline instead of a multicolor equalizer.
-CYAN_LOW  = QColor(0, 90, 130)
-CYAN_HIGH = QColor(0, 235, 255)
+CYAN_LOW  = QColor(30, 60, 100)     # One Dark blue dim
+CYAN_HIGH = QColor(97, 175, 239)    # One Dark blue
 
 
 def clamp(v, lo=0.0, hi=1.0):
