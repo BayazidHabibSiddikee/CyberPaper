@@ -1,0 +1,3 @@
+#!/bin/bash
+# swordfm — launcher for C++ file manager
+exec swordfm "$@" 2>/dev/null || exec "$(dirname "$0")/cpp-filemanager/build/swordfm" "$@"

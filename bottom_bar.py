@@ -1,7 +1,7 @@
 """bottom_bar.py — always-visible dock bar (replaces i3bar)
 
 Left:  clickable workspace buttons
-Mid:   time · CPU · RAM · disk · net speed · music
+Mid:   time · CPU · RAM · disk · net speed · active window
 Right: wifi SSID + IP · volume · battery · uptime
 """
 import os, json, getpass, subprocess
@@ -78,15 +78,18 @@ def _net():
         return "? KB/s"
 
 
-def _music():
+def _active_window():
     try:
-        out = subprocess.check_output(
-            ["playerctl", "metadata", "--format", "♫ {{artist}} – {{title}}"],
+        title = subprocess.check_output(
+            ["xdotool", "getactivewindow", "getwindowname"],
             timeout=1, text=True, stderr=subprocess.DEVNULL
         ).strip()
-        return (out[:45] + "…") if len(out) > 45 else out
     except Exception:
-        return "♫ —"
+        title = ""
+    if not title:
+        return "▣ none"
+    title = f"▣ {title}"
+    return (title[:45] + "…") if len(title) > 45 else title
 
 
 def _uptime():
@@ -199,16 +202,18 @@ class BottomBar(QWidget):
         bat_pct, bat_txt = _battery()
         self._stats = {
             "cpu": _cpu(), "mem": _mem_pct(), "disk": _disk_pct(),
-            "net": _net(), "music": _music(), "uptime": _uptime(),
+            "net": _net(), "uptime": _uptime(),
             "wifi": _network(), "bat": bat_txt, "bat_pct": bat_pct,
-            "vol": _volume(),
+            "vol": _volume(), "win": _active_window(),
         }
         self.update()
 
     def _refresh_ws(self):
         ws = _workspaces()
-        if ws != self._ws:
+        win = _active_window()
+        if ws != self._ws or win != self._stats.get("win"):
             self._ws = ws
+            self._stats["win"] = win
             self.update()
 
     def mousePressEvent(self, e):
@@ -274,7 +279,7 @@ class BottomBar(QWidget):
             (DIM,            SEP),
             (CYAN,           s.get("net", "?")),
             (DIM,            SEP),
-            (GREEN,          s.get("music", "♫ —")),
+            (GREEN,          s.get("win", "▣ none")),
         ]
         for color, text in parts:
             p.setPen(color)

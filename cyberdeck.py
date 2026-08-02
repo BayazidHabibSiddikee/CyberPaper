@@ -7,7 +7,7 @@ floating conky panels, no xwinwrap fights with i3.
 
 Usage:  python3 cyberdeck.py [--screen WxH]
 """
-import sys, os, signal, subprocess, argparse, Xlib, Xlib.display, Xlib.Xatom
+import sys, os, signal, argparse, Xlib, Xlib.display, Xlib.Xatom
 
 # Allow running from any directory
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -142,30 +142,13 @@ class CyberDeck(QWidget):
         # ── Graph render triggered only by graph-edit.sh (no polling) ──
 
     def _lower_below(self):
-        """Ensure correct stacking: glava (DESKTOP) < cyberdeck (BELOW) < apps."""
+        """Ensure correct stacking: glava (DESKTOP) < cyberdeck (BELOW) < apps.
+
+        Only lowers this window. glava's DESKTOP/BELOW properties are set once at
+        startup by cyberdesk.sh; X11 properties are durable, so re-applying them
+        every tick spawned ~259k xdotool/xprop processes a day and changed nothing.
+        """
         self.lower()
-        # Set glava to DESKTOP type — absolute bottom layer
-        try:
-            wid_out = subprocess.check_output(
-                ["xdotool", "search", "--class", "GLava"],
-                timeout=2, text=True,
-            ).strip().split("\n")[0]
-            if wid_out:
-                subprocess.run(
-                    ["xprop", "-id", wid_out,
-                     "-f", "_NET_WM_WINDOW_TYPE", "32a",
-                     "-set", "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_DESKTOP"],
-                    timeout=2, capture_output=True,
-                )
-                subprocess.run(
-                    ["xprop", "-id", wid_out,
-                     "-f", "_NET_WM_STATE", "32a",
-                     "-set", "_NET_WM_STATE",
-                     "_NET_WM_STATE_BELOW,_NET_WM_STATE_SKIP_TASKBAR,_NET_WM_STATE_SKIP_PAGER"],
-                    timeout=2, capture_output=True,
-                )
-        except Exception:
-            pass
 
     def paintEvent(self, _):
         # Solid dark fill behind everything (panels + spectrum overlay sit

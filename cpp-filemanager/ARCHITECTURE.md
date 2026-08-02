@@ -1,0 +1,276 @@
+# SwordFM — Architecture
+
+A Qt6 Widgets file manager. Single process, no threads, no plugins. Roughly
+3,800 lines of C++ across five subgroups under `src/`.
+
+Build: `cmake -B build -S . && cmake --build build -j4`
+Install: `install -Dm755 build/swordfm ~/.local/bin/swordfm`
+
+> Always check `which -a swordfm` after building. A stale copy in `~/.local/bin`
+> shadows a fresh build and makes changes look like they did nothing.
+
+---
+
+## Subgroup map
+
+```
+src/
+├── app/      entry point, window shell, theme       ← start reading here
+├── model/    data layer (what rows exist)
+├── view/     the file listing widget
+├── panel/    chrome around the listing
+└── ops/      actions performed on files
+```
+
+Dependency direction is one-way: `app` knows everything; `panel`, `view` and
+`ops` know only `model` and `app/theme.h`. Nothing in `model` includes a widget.
+
+Includes are subgroup-qualified (`#include "model/filefilter.h"`), so any file
+tells you at a glance which layers it reaches into.
+
+---
+
+## app/ — entry point and shell
+
+### `main.cpp`
+Creates the `QApplication`, forces the Fusion style, applies the One Dark
+palette, and hands off to `MainWindow`.
+
+`applyIconTheme()` exists because Qt only inherits the desktop icon theme when a
+platform theme plugin is loaded. Under Fusion on a bare i3 session
+`QIcon::themeName()` returns empty or `"hicolor"`, every `QIcon::fromTheme()`
+lookup yields a null icon, and the file list renders with no icons at all. The
+function reads `~/.config/gtk-3.0/settings.ini` and calls `QIcon::setThemeName()`
+directly. **If icons ever disappear again, look here first.**
+
+### `mainwindow.cpp` (~680 lines — the largest file)
+The coordinator. Owns every widget, the `QFileSystemModel`, navigation history,
+the clipboard, and the type/date filter state. Every user action lands here as a
+public slot (`copySelection`, `navigateUp`, `graphSelected`, …) so the menu bar,
+toolbar, context menu and keyboard shortcuts can all invoke the same code.
+
+Key internals:
+
+- **`applyDirectory(path, pushHistory)`** — the single funnel for changing
+  folders. `QFileSystemModel` loads asynchronously, so this stashes `m_pendingRoot`
+  and finishes the job in the `directoryLoaded` handler.
+- **`applyTypeDateFilter()`** — decides between two very different display modes.
+  With no filter active, the normal directory listing shows. With a type or date
+  filter, it triggers a **recursive** search instead (see `model/searchmodel`),
+  because "show me all images" means "under this whole tree", not "in this one
+  folder".
+- **`actionPaths()`** — resolves what copy/move/delete should operate on: marked
+  paths if any exist, otherwise the current selection.
+- **`onSelectionChanged()`** — selecting 2+ items automatically marks them, since
+  a multi-selection *is* the intent to act on a group.
+
+### `theme.h`
+One Dark color constants and the global stylesheet.
+
+```
+BG #282c34   BG2 #21252b   DIM #3e4451    BORDER / HOVER / SELECT
+FG #abb2bf   FG_DIM #5c6370
+CYAN #61afef  GREEN #98c379  AMBER #e5c07b  RED #e06c75  PURPLE #c678dd
+```
+
+There is **no `YELLOW`** — use `AMBER`. Referencing `Theme::YELLOW` is a
+recurring compile error.
+
+---
+
+## model/ — the data layer
+
+### `filemodel.cpp`
+Thin `QFileSystemModel` subclass. Only overrides `data()` for the font and
+`headerData()` for column titles.
+
+### `filefilter.cpp` — `FileFilterProxy`
+The `QSortFilterProxyModel` sitting between the model and the views. Three jobs:
+
+1. **Junk filtering** (`isJunkName`) — hides systemd units, libvirt clutter and
+   purely numeric names.
+2. **Type / date filtering** (`filterAcceptsRow`) — *within the current folder
+   only*. Directories are never filtered out; hiding them would strand you in a
+   folder with no way to navigate out.
+3. **Marks** — a sticky multi-selection that survives navigating between folders,
+   so one copy/delete can gather items from several places. Marks are rendered as
+   checkboxes via `Qt::CheckStateRole` and tinted `AMBER` via `Qt::ForegroundRole`.
+
+`suffixesFor(TypeFilter)` is the single extension table (images, videos, audio,
+documents, archives, discs) — shared with `SearchModel`. **Add new extensions
+here and both the in-folder filter and the recursive search pick them up.**
+
+### `searchmodel.cpp` — `SearchModel`
+A flat `QStandardItemModel` for recursive results. This exists because
+`QFileSystemModel` only ever exposes one directory at a time, so "every image
+under here" cannot be expressed as a filter over it.
+
+`search()` walks with `QDirIterator::Subdirectories`, capped at 5,000 results so
+scanning `$HOME` can't lock the UI. Columns:
+
+| Name | Location | Size | Type | Date Modified |
+|------|----------|------|------|---------------|
+
+Name is the bare filename and Location is the folder relative to the search root.
+They are separate columns deliberately — folding the path into Name pushed the
+filename off the right edge and made every row look nameless.
+
+The absolute path lives in `Qt::UserRole + 1`; retrieve it with `pathAt(index)`.
+
+> `SearchModel` uses `QFileIconProvider`, which requires a `QApplication`, not a
+> bare `QGuiApplication`. A test harness using the latter segfaults.
+
+---
+
+## view/ — the file listing
+
+### `fileview.cpp` — `FileView`
+A `QStackedWidget` with **three** pages:
+
+| Page | Widget | Model | When |
+|------|--------|-------|------|
+| Details | `QTreeView` | `FileFilterProxy` | default |
+| Icons | `QListView` | `FileFilterProxy` | view toggle |
+| Search | `QTreeView` | `SearchModel` | type/date filter active |
+
+The search page is the awkward one: it is **not** backed by the filesystem model,
+so anything reading indices needs an `m_searchMode` branch — `selectedPaths()`,
+`currentIndex()`, `currentView()`, `setDetailsMode()`.
+
+Double-click emits two different signals by design:
+- normal pages → `fileActivated(sourceIndex)`
+- search page → `pathActivated(path)`, since there is no source index to give
+
+Navigating anywhere clears search mode.
+
+---
+
+## panel/ — chrome around the listing
+
+### `toolbar.cpp`
+Path bar, nav buttons, search field, and in the top-right: the **type combo**
+(All types / Images / Videos / Audio / Documents / Archives / Discs) and the
+**date-range button**. Emits `typeFilterChanged(int)` and
+`dateRangeChanged(from, to)`; `MainWindow` decides what to do with them.
+
+### `sidebar.cpp`
+Places, Devices, Bookmarks.
+
+- **Places** are XDG dirs. `addXdgPlace()` skips any that resolve to `$HOME` —
+  an XDG dir that was never created (e.g. `~/Music`) returns `$HOME`, which would
+  otherwise show a second "Home" entry under a misleading name. **This is why
+  Music is absent: the folder does not exist. Create `~/Music` and it appears.**
+- **Devices** come from `QStorageInfo::mountedVolumes()`, filtered down to
+  removable paths and rclone/FUSE cloud mounts. `deviceLabel()` resolves the real
+  disk label through `/dev/disk/by-label` symlinks, because `QStorageInfo::name()`
+  returns empty here and volumes would otherwise display as raw UUIDs.
+- **Bookmarks** persist to `~/.config/swordfm/bookmarks.json`.
+
+List heights are computed from `sizeHintForRow()` rather than hard-coded;
+scrollbars are disabled, so an under-estimate silently swallows the last entries.
+
+### `previewpanel.cpp`
+A `QStackedWidget` over four pages: empty, text, image (in a `QScrollArea`), and
+a stub for unpreviewable files. Handles:
+
+- **Text / code** — up to 2 MB, rejected if NUL bytes appear in the first 8 KB.
+- **Images** — the full-resolution pixmap is kept in `m_sourcePixmap` so zooming
+  in re-samples the original instead of magnifying a downscaled copy.
+- **PDF** — shelled out to `pdftoppm -png -r 150 -f 1 -l 1` (poppler), which
+  writes `<prefix>-1.png`. Async; the completion handler checks the selection
+  hasn't moved on before displaying.
+- **Folder graphs** — runs `swordgraph` and displays the PNG.
+
+Zoom (`−` / `+` / `⤢` in the header) applies to whichever pixmap is showing, so
+images, PDFs and graphs all zoom with the same code. The buttons hide themselves
+on text and stub pages.
+
+### `statusbar.cpp`
+Item count · search info (purple) · mark count (amber) · selection · clipboard.
+
+---
+
+## ops/ — actions on files
+
+### `fileops.cpp`
+Free functions: `copyFiles`, `moveFiles`, `deleteFileOrDir`, `selectedTotalSize`,
+`uniqueDestPath`. No UI, no dialogs — callers handle confirmation.
+
+### `contextmenu.cpp`
+Builds the right-click menu and wires entries straight to `MainWindow` slots.
+"Open in SwordGraph" sits directly above "Open in Terminal". Archive entries
+("Extract Here", "Extract to Subfolder", and the "Compress" submenu) appear
+between the mark actions and cut/copy/paste. Extract only shows when *every*
+selected item is an archive, so it is never a no-op.
+
+### `archiveops.cpp`
+Create and extract archives by shelling out to the standard CLI tools.
+
+`availableFormats()` probes the system and only offers formats whose tool is
+actually installed, so the Compress submenu never lists something that will
+fail. Supported: zip, tar.gz, tar.xz, tar.bz2, tar.zst, tar, 7z. Extraction
+additionally handles rar and bare gz/bz2/xz/zst. If Info-ZIP `zip` is missing
+but `7z` is present, 7z transparently covers the zip case.
+
+Two details worth preserving:
+
+- **Arguments are always passed as a `QStringList`, never a shell string.** A
+  file named `weird; name.txt` must be one literal argument; building a command
+  line by concatenation would execute it. There is no shell in this path.
+- **Compression runs from the items' common parent** and passes bare filenames,
+  so the archive stores `photos/a.png` instead of `home/sword/Pictures/photos/a.png`.
+
+Suffix matching tries longest-first, so `.tar.gz` wins over `.gz` — otherwise a
+tarball would be treated as a plain gzip stream and unpack to a single blob.
+
+### `openwith.cpp`
+Freedesktop `.desktop` handling — parses MIME associations, reads
+`mimeapps.list` for defaults, launches via the `Exec=` line. Includes a
+preferred-video-player fallback list for when the registered default is wrong.
+
+### `termutil.cpp`
+`openTerminalAt()`, `openInYazi()`, and `isPreviewableFile()`.
+
+---
+
+## Companion tool: `swordgraph`
+
+Python script in the parent project directory (`../swordgraph`), also installed
+to `~/.local/bin`. Renders a directory tree as a graphviz/neato diagram.
+
+```
+swordgraph --out /tmp/graph.png ~/some/project
+```
+
+**On resolution:** `size` is an upper bound in *inches* and `dpi` converts it to
+pixels. Raising dpi while proportionally shrinking size cancels out and produces
+no supersampling — this was the original blur bug. The fix holds `size` at
+`width/96` and raises `dpi` to `96 * scale` (scale=4), supersampling nodes, edges
+and text alike for a crisp downscale.
+
+---
+
+## Where to make common changes
+
+| Goal | File |
+|------|------|
+| Add a searchable file type | `model/filefilter.cpp` → `suffixesFor()` |
+| Change what search results show | `model/searchmodel.cpp` → `search()` |
+| Add a toolbar control | `panel/toolbar.cpp` + a `MainWindow` connect |
+| Add a context-menu entry | `ops/contextmenu.cpp` + a `MainWindow` slot |
+| Add an archive format | `ops/archiveops.cpp` → `availableFormats()` + `compressTo()` |
+| Add a preview format | `panel/previewpanel.cpp` → `previewFile()` |
+| Change colors | `app/theme.h` |
+| Hide more filesystem junk | `model/filefilter.cpp` → `isJunkName()` |
+| Add a sidebar section | `panel/sidebar.cpp` → `rebuildPlaces()` |
+| Add a keyboard shortcut | `app/mainwindow.cpp` → `setupMenus()` |
+
+## Gotchas worth knowing
+
+- `QFileSystemModel` populates **asynchronously**. Anything touching a directory
+  right after `setRootPath()` must wait for `directoryLoaded`.
+- Marks are keyed by absolute path, not index, so they survive navigation and
+  model resets.
+- The search page breaks the "everything is a filesystem index" assumption. New
+  code reading the current selection needs an `m_searchMode` branch.
+- Filters never hide directories, on purpose.

@@ -49,25 +49,42 @@ class MainPanel(QWidget):
         self._graph_watcher = QFileSystemWatcher([GRAPH_PNG, GRAPH_JSON], self)
         self._graph_watcher.fileChanged.connect(self._on_graph_changed)
 
-        self._edit_btn = QPushButton("✚ EDIT GRAPH", self)
-        self._edit_btn.setCursor(Qt.PointingHandCursor)
-        self._edit_btn.setStyleSheet("""
+        btn_style = """
             QPushButton {
                 color: #98c379; background: rgba(62, 68, 81, 160);
                 border: 1px solid #3e4451; border-radius: 3px;
                 font: bold 9pt 'JetBrains Mono'; padding: 3px 10px;
             }
             QPushButton:hover { background: rgba(97, 175, 239, 200); border-color: #61afef; }
-        """)
+        """
+
+        self._edit_btn = QPushButton("✚ EDIT GRAPH", self)
+        self._edit_btn.setCursor(Qt.PointingHandCursor)
+        self._edit_btn.setStyleSheet(btn_style)
         self._edit_btn.clicked.connect(self._edit_graph)
+
+        self._fm_btn = QPushButton("📁 SWORDFM", self)
+        self._fm_btn.setCursor(Qt.PointingHandCursor)
+        self._fm_btn.setStyleSheet(btn_style)
+        self._fm_btn.clicked.connect(self._open_fm)
 
     def _edit_graph(self):
         script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "graph-edit.sh")
         subprocess.Popen([script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+    def _open_fm(self):
+        subprocess.Popen(["swordfm"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
     def resizeEvent(self, e):
+        w = self.width()
         self._edit_btn.adjustSize()
-        self._edit_btn.move(self.width() - self._edit_btn.width() - 16, 100)
+        self._fm_btn.adjustSize()
+        gap = 8
+        total = self._edit_btn.width() + gap + self._fm_btn.width()
+        x = w - total - 16
+        y = self.height() - 56
+        self._edit_btn.move(x, y)
+        self._fm_btn.move(x + self._edit_btn.width() + gap, y)
         super().resizeEvent(e)
 
     def _load_graph(self):
@@ -92,6 +109,10 @@ class MainPanel(QWidget):
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
+        # The graph PNG is rendered larger than the panel and always scaled
+        # down; without this the downscale is nearest-neighbour and the text
+        # in the graph turns to mush.
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
         w, h = self.width(), self.height()
         # no fill — shared bluish background comes from the deck window
 
@@ -114,22 +135,21 @@ class MainPanel(QWidget):
 
         p.setPen(QPen(DIM, 1)); p.drawLine(16, 95, w - 16, 95)
 
-        lbl_f = QFont("JetBrains Mono", 10, QFont.Bold)
-        p.setFont(lbl_f); p.setPen(GREEN)
-        p.drawText(16, 114, "▶  MISSION GRAPH")
-
-        # ── Graph image — full width now, no crop/seam ──────────────
-        graph_top = 120
-        graph_h   = h - graph_top - 40   # leave room for telemetry strip
-        if self._px and not self._px.isNull():
-            src = self._px.rect()
-            p.drawPixmap(QRect(0, graph_top, w, graph_h), self._px, src)
+        # ── Graph image — full width, clickable ────────────────────
+        graph_top = 100
+        graph_h   = h - graph_top - 60   # leave room for buttons + telemetry
+        if self._nodes and self._px and not self._px.isNull():
+            scaled = self._px.size().scaled(w, graph_h, Qt.KeepAspectRatio)
+            dst = QRect(0, graph_top, scaled.width(), scaled.height())
+            dst.moveLeft((w - scaled.width()) // 2)
+            dst.moveTop(graph_top + (graph_h - scaled.height()) // 2)
+            p.drawPixmap(dst, self._px, self._px.rect())
         else:
             p.setPen(DIM)
             p.setFont(QFont("JetBrains Mono", 11))
             p.drawText(QRect(0, graph_top, w, graph_h), Qt.AlignCenter, "[ no graph ]")
 
-        # ── Telemetry strip — one line, spans the full merged width ──
+        # ── Telemetry strip — one line ──────────────────────────────
         sy = h - 34
         p.setPen(QPen(DIM, 1)); p.drawLine(16, sy, w - 16, sy)
         p.setFont(QFont("JetBrains Mono", 9))
