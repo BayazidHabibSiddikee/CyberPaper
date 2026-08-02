@@ -55,6 +55,8 @@ public slots:
 private slots:
     void onFileActivated(const QModelIndex &index);
     void onSelectionChanged();
+    void onSearchProgress(int found);
+    void onSearchFinished(int found, bool truncated);
 
 private:
     void setupUi();
@@ -79,6 +81,7 @@ private:
 
     QString m_currentPath;
     QString m_pendingRoot;
+    QString m_searchLabel;
     int m_typeFilter = 0;
     QDate m_dateFrom;
     QDate m_dateTo;

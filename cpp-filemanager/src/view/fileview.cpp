@@ -145,19 +145,29 @@ void FileView::setupSearchView() {
     hdr->resizeSection(3, 120);
 
     wireView(m_searchView);
+
+    connect(m_searchModel, &SearchModel::progress, this, &FileView::searchProgress);
+    connect(m_searchModel, &SearchModel::completed, this,
+            [this](int found, bool truncated) {
+                m_searchView->setSortingEnabled(true);
+                emit searchFinished(found, truncated);
+            });
 }
 
-int FileView::showSearchResults(const QString &root, int typeFilter,
-                                const QDate &from, const QDate &to) {
-    const int n = m_searchModel->search(
-        root, static_cast<FileFilterProxy::TypeFilter>(typeFilter), from, to);
+void FileView::startSearch(const QString &root, int typeFilter,
+                           const QDate &from, const QDate &to, bool includeHidden) {
+    // Sorting stays off during the walk: re-sorting on every incoming batch
+    // costs more than the scan itself. It is re-enabled in searchFinished.
+    m_searchView->setSortingEnabled(false);
     m_searchMode = true;
     m_stack->setCurrentWidget(m_searchView);
-    m_searchView->sortByColumn(0, Qt::AscendingOrder);
-    return n;
+    m_searchModel->startSearch(
+        root, static_cast<FileFilterProxy::TypeFilter>(typeFilter), from, to,
+        includeHidden);
 }
 
 void FileView::clearSearchResults() {
+    m_searchModel->stopSearch();
     if (!m_searchMode)
         return;
     m_searchMode = false;

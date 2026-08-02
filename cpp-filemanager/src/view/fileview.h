@@ -29,9 +29,11 @@ public:
     QAbstractItemView *currentView() const;
     FileFilterProxy *proxy() const { return m_proxy; }
 
-    // Recursive results replace the directory listing until cleared.
-    int showSearchResults(const QString &root, int typeFilter,
-                          const QDate &from, const QDate &to);
+    // Recursive results replace the directory listing until cleared. The walk
+    // runs on a worker thread, so rows arrive after this returns — watch
+    // searchProgress/searchFinished rather than expecting a count here.
+    void startSearch(const QString &root, int typeFilter,
+                     const QDate &from, const QDate &to, bool includeHidden);
     void clearSearchResults();
     bool inSearchMode() const { return m_searchMode; }
 
@@ -40,6 +42,8 @@ signals:
     void pathActivated(const QString &path);
     void selectionChanged();
     void contextMenuRequested(const QPoint &globalPos);
+    void searchProgress(int found);
+    void searchFinished(int found, bool truncated);
 
 private slots:
     void onDoubleClicked(const QModelIndex &proxyIndex);

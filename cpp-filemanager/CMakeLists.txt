@@ -17,6 +17,7 @@ add_executable(swordfm
     src/model/filemodel.cpp
     src/model/filefilter.cpp
     src/model/searchmodel.cpp
+    src/model/filescanner.cpp
 
     # view — the file listing itself (details / icon / search pages)
     src/view/fileview.cpp

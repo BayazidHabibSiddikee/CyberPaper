@@ -150,6 +150,8 @@ void MainWindow::setupUi() {
 
     connect(m_fileView, &FileView::fileActivated, this, &MainWindow::onFileActivated);
     connect(m_fileView, &FileView::selectionChanged, this, &MainWindow::onSelectionChanged);
+    connect(m_fileView, &FileView::searchProgress, this, &MainWindow::onSearchProgress);
+    connect(m_fileView, &FileView::searchFinished, this, &MainWindow::onSearchFinished);
     connect(m_fileView, &FileView::contextMenuRequested, this, [this](const QPoint &globalPos) {
         showContextMenu(this, globalPos, m_fileView->selectedPaths(), m_currentPath);
     });
@@ -756,15 +758,26 @@ void MainWindow::applyTypeDateFilter() {
     }
 
     // A type/date filter means "find these anywhere under here", so results
-    // come from a recursive walk rather than the current directory listing.
-    QGuiApplication::setOverrideCursor(Qt::WaitCursor);
-    const int n = m_fileView->showSearchResults(m_currentPath, m_typeFilter,
-                                                m_dateFrom, m_dateTo);
-    QGuiApplication::restoreOverrideCursor();
+    // come from a recursive walk. The walk is threaded and streams rows in, so
+    // there is nothing to block on here — the status line is driven by the
+    // searchProgress / searchFinished signals instead.
+    m_searchLabel = QFileInfo(m_currentPath).fileName();
+    m_statusbar->setSearchInfo(QString("Searching %1 …").arg(m_searchLabel));
+    m_fileView->startSearch(m_currentPath, m_typeFilter, m_dateFrom, m_dateTo,
+                            m_showHidden);
+    updateStatusBar();
+}
 
+void MainWindow::onSearchProgress(int found) {
     m_statusbar->setSearchInfo(
-        QString("%1 match%2 under %3")
-            .arg(n).arg(n == 1 ? "" : "es").arg(QFileInfo(m_currentPath).fileName()));
+        QString("Searching %1 … %2 found").arg(m_searchLabel).arg(found));
+}
+
+void MainWindow::onSearchFinished(int found, bool truncated) {
+    m_statusbar->setSearchInfo(
+        QString("%1 match%2 under %3%4")
+            .arg(found).arg(found == 1 ? "" : "es").arg(m_searchLabel)
+            .arg(truncated ? "  (limit reached)" : ""));
     updateStatusBar();
 }
 

@@ -105,8 +105,10 @@ A flat `QStandardItemModel` for recursive results. This exists because
 `QFileSystemModel` only ever exposes one directory at a time, so "every image
 under here" cannot be expressed as a filter over it.
 
-`search()` walks with `QDirIterator::Subdirectories`, capped at 5,000 results so
-scanning `$HOME` can't lock the UI. Columns:
+`startSearch()` is **asynchronous**: it clears the model, hands the walk to a
+`FileScanner` on a `QThread`, and returns immediately. Rows arrive in batches
+via `progress(found)`, and `completed(found, truncated)` fires at the end.
+Starting a new search cancels any scan still running. Columns:
 
 | Name | Location | Size | Type | Date Modified |
 |------|----------|------|------|---------------|
@@ -117,8 +119,44 @@ filename off the right edge and made every row look nameless.
 
 The absolute path lives in `Qt::UserRole + 1`; retrieve it with `pathAt(index)`.
 
+Icons and type names are cached **per extension**. Asking the MIME database and
+icon theme once per result made populating twenty thousand rows slower than the
+disk walk that produced them; every `.png` resolves identically, so one lookup
+per suffix is enough.
+
 > `SearchModel` uses `QFileIconProvider`, which requires a `QApplication`, not a
 > bare `QGuiApplication`. A test harness using the latter segfaults.
+
+### `filescanner.cpp` — `FileScanner`
+The recursive walk itself, run off the GUI thread. This replaced a synchronous
+`QDirIterator` loop that froze the window; a search of `$HOME` went from
+**over 165 seconds (never observed finishing) to 1.6 s**, and 426 ms → 41 ms on
+a purely local subtree. First results appear in ~40 ms.
+
+Three things make the difference, in descending order of impact:
+
+1. **It does not cross filesystem boundaries** (one `fstat` per directory, the
+   same rule as `find -xdev`). A home directory here has several rclone/FUSE
+   cloud mounts under it, and descending into one turns every `readdir` into a
+   network round trip. This was the dominant cost by far. Searching *inside* a
+   mount still works — the root's device becomes the reference.
+2. **POSIX `readdir` instead of `QDirIterator`.** `dirent.d_type` distinguishes
+   file from directory with no `stat()` syscall, so the extension test — pure
+   string work — rejects the vast majority of entries before any metadata is
+   read. Only entries that already matched get `stat()`ed. `DT_UNKNOWN` (older
+   XFS, some network mounts) falls back to `lstat`.
+3. **A work-stealing thread pool** over a shared directory queue, sized to
+   `min(8, cores)`. The queue tracks in-flight directories as well as pending
+   ones, so the scan ends only when nothing is queued *and* nobody is walking.
+
+Results are emitted in batches (200 hits or 100 ms, whichever first). One signal
+per file would flood the event loop and end up slower than the synchronous
+version. Cancellation is a `std::atomic<bool>` checked per directory —
+verified race-free under ThreadSanitizer across 20 mid-walk cancellations.
+
+Hidden entries are skipped unless the window's show-hidden toggle is on, which
+keeps results identical to what the old walk returned.
+
 
 ---
 
@@ -255,7 +293,8 @@ and text alike for a crisp downscale.
 | Goal | File |
 |------|------|
 | Add a searchable file type | `model/filefilter.cpp` → `suffixesFor()` |
-| Change what search results show | `model/searchmodel.cpp` → `search()` |
+| Change what search results show | `model/searchmodel.cpp` → `appendBatch()` |
+| Tune search speed / traversal rules | `model/filescanner.cpp` → `run()` |
 | Add a toolbar control | `panel/toolbar.cpp` + a `MainWindow` connect |
 | Add a context-menu entry | `ops/contextmenu.cpp` + a `MainWindow` slot |
 | Add an archive format | `ops/archiveops.cpp` → `availableFormats()` + `compressTo()` |
@@ -274,3 +313,5 @@ and text alike for a crisp downscale.
 - The search page breaks the "everything is a filesystem index" assumption. New
   code reading the current selection needs an `m_searchMode` branch.
 - Filters never hide directories, on purpose.
+- Recursive search will not cross a mount point. If results from a cloud mount
+  are missing, that is deliberate — navigate into the mount and search there.
