@@ -31,6 +31,7 @@ add_executable(swordfm
     # ops — actions performed on files
     src/ops/fileops.cpp
     src/ops/archiveops.cpp
+    src/ops/convertops.cpp
     src/ops/contextmenu.cpp
     src/ops/openwith.cpp
     src/ops/termutil.cpp

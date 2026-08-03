@@ -47,6 +47,7 @@ public slots:
     void bookmarkSelection();
     void openTerminalHere();
     void compressSelection(const QString &formatId);
+    void convertSelection(const QString &formatId);
     void extractSelectionHere();
     void extractSelectionToFolder();
     void toggleMarkSelection();

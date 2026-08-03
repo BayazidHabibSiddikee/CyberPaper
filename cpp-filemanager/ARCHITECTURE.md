@@ -261,6 +261,15 @@ Two details worth preserving:
 Suffix matching tries longest-first, so `.tar.gz` wins over `.gz` — otherwise a
 tarball would be treated as a plain gzip stream and unpack to a single blob.
 
+### `convertops.cpp`
+Document conversion between PDF, DOCX, Markdown, TXT and HTML, delegated to the
+`swordconv` Python helper (see below). `conversionTargetsFor()` omits the file's
+own format so the menu never offers a no-op, and the "Convert To" submenu only
+appears when every selected file is the same kind of document.
+
+Output goes beside the original via `uniqueDestPath()`, so converting never
+overwrites anything.
+
 ### `openwith.cpp`
 Freedesktop `.desktop` handling — parses MIME associations, reads
 `mimeapps.list` for defaults, launches via the `Exec=` line. Includes a
@@ -270,6 +279,43 @@ preferred-video-player fallback list for when the registered default is wrong.
 `openTerminalAt()`, `openInYazi()`, and `isPreviewableFile()`.
 
 ---
+
+## Companion tool: `swordconv`
+
+Python script in the parent project directory, installed to `~/.local/bin`.
+Converts between PDF, DOCX, Markdown, TXT and HTML.
+
+```
+swordconv <pdf|docx|md|txt|html> <input> <output>
+```
+
+**No LibreOffice or pandoc dependency**, deliberately — those are hundreds of
+megabytes and slow to start. Instead:
+
+| Direction | Engine |
+|-----------|--------|
+| anything → PDF | PyMuPDF `Story` (lays HTML out across pages, keeps formatting) |
+| PDF → DOCX | `pdf2docx` (preserves layout, tables, images) |
+| DOCX → html/md/txt | `mammoth` |
+| PDF → md/txt/html | PyMuPDF text extraction |
+| Markdown → html | `markdown` if installed, else a built-in subset |
+
+Two details in the PDF reader worth keeping:
+
+- A PDF has no headings, only text at different sizes. The reader takes the
+  **most common font size as body text** and promotes anything meaningfully
+  larger back to a heading — without this, converted output is one flat wall of
+  paragraphs.
+- Extraction uses `TEXT_DEHYPHENATE`, which also **expands ligatures**.
+  Otherwise "first" comes back as the single glyph `ﬁrst` and every later
+  search for it fails.
+
+Bold detection requires the *whole* line to be bold. Testing "contains a bold
+span" turned every paragraph with an emphasised phrase into a heading.
+
+Errors go to stderr in plain English and SwordFM shows them verbatim, so a
+password-protected or scanned PDF produces an explanation rather than a
+mysterious failure.
 
 ## Companion tool: `swordgraph`
 
@@ -298,6 +344,7 @@ and text alike for a crisp downscale.
 | Add a toolbar control | `panel/toolbar.cpp` + a `MainWindow` connect |
 | Add a context-menu entry | `ops/contextmenu.cpp` + a `MainWindow` slot |
 | Add an archive format | `ops/archiveops.cpp` → `availableFormats()` + `compressTo()` |
+| Add a conversion format | `swordconv` → `READERS` + a writer |
 | Add a preview format | `panel/previewpanel.cpp` → `previewFile()` |
 | Change colors | `app/theme.h` |
 | Hide more filesystem junk | `model/filefilter.cpp` → `isJunkName()` |

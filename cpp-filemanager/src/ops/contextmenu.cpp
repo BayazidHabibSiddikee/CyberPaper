@@ -4,6 +4,7 @@
 #include "app/theme.h"
 #include "ops/openwith.h"
 #include "ops/archiveops.h"
+#include "ops/convertops.h"
 
 #include <QMenu>
 #include <QAction>
@@ -117,6 +118,29 @@ void showContextMenu(MainWindow *window, const QPoint &globalPos,
                            window, &MainWindow::extractSelectionHere);
             menu.addAction(QIcon::fromTheme("archive-extract"), "Extract to Subfolder",
                            window, &MainWindow::extractSelectionToFolder);
+        }
+
+        // Document conversion. Offered only when every selected file is the
+        // same kind of document, so one menu choice applies cleanly to all.
+        bool sameDocType = fi.isFile() && isConvertible(path);
+        if (sameDocType) {
+            const QString first = fi.suffix().toLower();
+            for (const QString &p : selectedPaths) {
+                if (QFileInfo(p).suffix().toLower() != first) { sameDocType = false; break; }
+            }
+        }
+        if (sameDocType) {
+            const auto targets = conversionTargetsFor(path);
+            if (!targets.isEmpty()) {
+                auto *conv = menu.addMenu(QIcon::fromTheme("document-export"),
+                                          "Convert To");
+                for (const ConvFormat &f : targets) {
+                    QAction *act = conv->addAction(f.label);
+                    const QString id = f.id;
+                    QObject::connect(act, &QAction::triggered, window,
+                                     [window, id]() { window->convertSelection(id); });
+                }
+            }
         }
 
         const auto formats = availableFormats();

@@ -12,6 +12,7 @@
 #include "app/theme.h"
 #include "ops/openwith.h"
 #include "ops/archiveops.h"
+#include "ops/convertops.h"
 
 #include <QVBoxLayout>
 #include <QFileSystemModel>
@@ -398,6 +399,48 @@ void MainWindow::previewSelected() {
 void MainWindow::openTerminalHere() {
     auto paths = m_fileView->selectedPaths();
     openTerminalAt(paths.isEmpty() ? m_currentPath : paths.first());
+}
+
+void MainWindow::convertSelection(const QString &formatId) {
+    const QStringList paths = m_fileView->selectedPaths();
+    if (paths.isEmpty())
+        return;
+
+    ConvFormat chosen;
+    for (const ConvFormat &f : conversionTargetsFor(paths.first())) {
+        if (f.id == formatId) { chosen = f; break; }
+    }
+    if (chosen.id.isEmpty())
+        return;
+
+    QStringList failures;
+    int done = 0;
+    QGuiApplication::setOverrideCursor(Qt::WaitCursor);
+    for (const QString &p : paths) {
+        if (!isConvertible(p)) {
+            failures << QString("%1: not a convertible document")
+                            .arg(QFileInfo(p).fileName());
+            continue;
+        }
+        const QFileInfo fi(p);
+        const QString out = uniqueDestPath(fi.absolutePath(),
+                                           fi.completeBaseName() + chosen.suffix);
+        QString error;
+        if (convertDocument(p, out, chosen.id, &error))
+            ++done;
+        else
+            failures << QString("%1: %2").arg(fi.fileName(), error);
+    }
+    QGuiApplication::restoreOverrideCursor();
+
+    if (!failures.isEmpty()) {
+        QMessageBox::warning(this, "SwordFM",
+                             QString("Converted %1 of %2 file%3.\n\n%4")
+                                 .arg(done).arg(paths.size())
+                                 .arg(paths.size() == 1 ? "" : "s")
+                                 .arg(failures.join("\n\n")));
+    }
+    refresh();
 }
 
 void MainWindow::compressSelection(const QString &formatId) {
