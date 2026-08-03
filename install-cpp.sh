@@ -24,6 +24,7 @@ install -Dm755 "$HERE/cpp-filemanager/build/swordfm"  "$PREFIX/bin/swordfm"
 # Helper scripts SwordFM shells out to.
 install -Dm755 "$HERE/swordconv"  "$PREFIX/bin/swordconv"
 install -Dm755 "$HERE/swordgraph" "$PREFIX/bin/swordgraph"
+install -Dm755 "$HERE/swordshare" "$PREFIX/bin/swordshare"
 
 # Desktop entry for swordfm.
 #

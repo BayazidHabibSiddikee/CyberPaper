@@ -5,6 +5,7 @@
 #include "ops/openwith.h"
 #include "ops/archiveops.h"
 #include "ops/convertops.h"
+#include "ops/shareops.h"
 
 #include <QMenu>
 #include <QAction>
@@ -17,8 +18,6 @@
 void showContextMenu(MainWindow *window, const QPoint &globalPos,
                      const QStringList &selectedPaths, const QString &currentPath)
 {
-    Q_UNUSED(currentPath);
-
     QMenu menu(window);
     menu.setStyleSheet(QString(
         "QMenu { background: %1; color: %2; border: 1px solid %3; }"
@@ -42,6 +41,13 @@ void showContextMenu(MainWindow *window, const QPoint &globalPos,
                        window, &MainWindow::graphCurrent);
         menu.addAction(QIcon::fromTheme("utilities-terminal"), "Open Terminal Here",
                        window, &MainWindow::openTerminalHere);
+        if (isShareable(currentPath)) {
+            menu.addAction(QIcon::fromTheme("network-server"), "Share This Folder",
+                           window, [window, currentPath]() {
+                ShareDialog dlg(currentPath, window);
+                dlg.exec();
+            });
+        }
         menu.addAction(QIcon::fromTheme("bookmark-new"), "Bookmark This Folder",
                        window, &MainWindow::bookmarkCurrent);
     } else {
@@ -93,6 +99,16 @@ void showContextMenu(MainWindow *window, const QPoint &globalPos,
                        window, &MainWindow::openTerminalHere);
         menu.addAction(QIcon::fromTheme("bookmark-new"), "Add Bookmark",
                        window, &MainWindow::bookmarkSelection);
+
+        // Network sharing serves exactly one item, so it is offered only on a
+        // single selection.
+        if (selectedPaths.size() == 1 && isShareable(path)) {
+            menu.addAction(QIcon::fromTheme("network-server"), "Share over Network",
+                           window, [window, path]() {
+                ShareDialog dlg(path, window);
+                dlg.exec();
+            });
+        }
 
         menu.addSeparator();
         menu.addAction(QIcon::fromTheme("edit-select-all"),

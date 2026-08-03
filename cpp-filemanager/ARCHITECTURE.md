@@ -270,6 +270,17 @@ appears when every selected file is the same kind of document.
 Output goes beside the original via `uniqueDestPath()`, so converting never
 overwrites anything.
 
+### `shareops.cpp`
+`ShareDialog` — serve a file or folder to your phone over the LAN. Unlike every
+other helper, `swordshare` is **long-lived**: it keeps listening until stopped.
+The dialog therefore owns the process and kills it in its destructor, so closing
+the window always stops the server. There is no way to leave one running
+invisibly.
+
+The dialog shows a QR code, the URL and a six-digit code, and copies the URL to
+the clipboard. It appears in the context menu on a single selection ("Share over
+Network") and on empty space ("Share This Folder").
+
 ### `openwith.cpp`
 Freedesktop `.desktop` handling — parses MIME associations, reads
 `mimeapps.list` for defaults, launches via the `Exec=` line. Includes a
@@ -317,6 +328,47 @@ Errors go to stderr in plain English and SwordFM shows them verbatim, so a
 password-protected or scanned PDF produces an explanation rather than a
 mysterious failure.
 
+## Companion tool: `swordshare`
+
+Python script in the parent project directory, installed to `~/.local/bin`.
+Serves one file or folder over HTTP to devices on the same network.
+
+```
+swordshare <path> [--port N] [--no-upload]
+```
+
+It prints **one JSON line** when listening (`url`, `ip`, `port`, `password`,
+`qr`, `upload`, `name`) and then serves until killed. `ShareDialog` parses that
+line and terminates the process on Stop.
+
+**HTTP, not FTP** — every current phone browser removed `ftp://` support, so a
+QR code containing an FTP link simply fails to open. HTTP opens in the browser
+that just scanned the code.
+
+Design points worth keeping:
+
+- **Binds to the LAN address, never `0.0.0.0`.** `lan_ip()` gets it by
+  connecting a UDP socket (no packet is sent); resolving the hostname instead
+  usually just returns `127.0.0.1`.
+- **Every path goes through `Share.resolve()`**, which calls `realpath()` *before*
+  the prefix check — so neither `../` nor a symlink pointing outside the shared
+  folder can reach the rest of the disk. Sharing a single file additionally
+  404s everything else in its directory.
+- **Sessions are HMAC-signed cookies** over a per-run random key, so a forged
+  cookie cannot be constructed and every restart invalidates old ones.
+- **Uploads are streamed to disk**, not buffered. `cgi` was removed in Python
+  3.13 and the stdlib alternatives hold the whole body in memory, which a phone
+  uploading a video would not survive. `BodyReader` exists because mixing
+  `readline()` with `read()` on the raw socket loses bytes already pulled past
+  a part boundary — that dropped every file after the first. The CRLF ending a
+  boundary line must also be stripped from the pushed-back tail, or the next
+  part reads as unnamed.
+- **`SIGTERM` is turned into a normal exit** so the temporary QR image is
+  cleaned up. Without it, terminating the server leaves `/tmp` littered.
+
+The password is six digits shown as two groups; the login comparison strips
+spaces, so it can be typed either way.
+
 ## Companion tool: `swordgraph`
 
 Python script in the parent project directory (`../swordgraph`), also installed
@@ -345,6 +397,7 @@ and text alike for a crisp downscale.
 | Add a context-menu entry | `ops/contextmenu.cpp` + a `MainWindow` slot |
 | Add an archive format | `ops/archiveops.cpp` → `availableFormats()` + `compressTo()` |
 | Add a conversion format | `swordconv` → `READERS` + a writer |
+| Change what the share server serves | `swordshare` → `Handler` / `Share.resolve()` |
 | Add a preview format | `panel/previewpanel.cpp` → `previewFile()` |
 | Change colors | `app/theme.h` |
 | Hide more filesystem junk | `model/filefilter.cpp` → `isJunkName()` |
@@ -362,3 +415,5 @@ and text alike for a crisp downscale.
 - Filters never hide directories, on purpose.
 - Recursive search will not cross a mount point. If results from a cloud mount
   are missing, that is deliberate — navigate into the mount and search there.
+- The share server is reachable by anything on your local network that knows the
+  password. Closing the dialog stops it; there is no background mode.
