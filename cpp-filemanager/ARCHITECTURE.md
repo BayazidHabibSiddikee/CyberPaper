@@ -278,8 +278,18 @@ the window always stops the server. There is no way to leave one running
 invisibly.
 
 The dialog shows a QR code, the URL and a six-digit code, and copies the URL to
-the clipboard. It appears in the context menu on a single selection ("Share over
-Network") and on empty space ("Share This Folder").
+the clipboard. When a device enters the code, an **Allow / Deny** row appears
+naming its address; only after Allow does that device get in, and only one
+device may hold the share at a time. **Disconnect Device** frees the slot for
+another. The code is hidden once a device is paired — it is spent, and leaving it
+on screen only invites shoulder-surfing.
+
+Communication is line-delimited JSON: events (`ready`, `claim`, `paired`,
+`rejected`, `released`) arrive on the helper's stdout, and answers (`allow`,
+`deny`, `release`, `quit`) go back on its stdin.
+
+It appears in the context menu on a single selection ("Share over Network") and
+on empty space ("Share This Folder").
 
 ### `openwith.cpp`
 Freedesktop `.desktop` handling — parses MIME associations, reads
@@ -337,9 +347,14 @@ Serves one file or folder over HTTP to devices on the same network.
 swordshare <path> [--port N] [--no-upload]
 ```
 
-It prints **one JSON line** when listening (`url`, `ip`, `port`, `password`,
-`qr`, `upload`, `name`) and then serves until killed. `ShareDialog` parses that
-line and terminates the process on Stop.
+It prints **one JSON line per event** on stdout — `ready` (carrying `url`, `ip`,
+`port`, `password`, `qr`, `upload`, `name`), then `claim` / `paired` / `rejected`
+/ `released` as devices come and go — and reads commands (`allow`, `deny`,
+`release`, `quit`) on stdin. `ShareDialog` drives both ends.
+
+> The stdin reader uses `readline()`, not `for line in sys.stdin`. The latter's
+> read-ahead buffering holds a command back until enough further input arrives,
+> which here is never — the first `allow` would simply never be seen.
 
 **HTTP, not FTP** — every current phone browser removed `ftp://` support, so a
 QR code containing an FTP link simply fails to open. HTTP opens in the browser
@@ -347,6 +362,14 @@ that just scanned the code.
 
 Design points worth keeping:
 
+- **Exactly one device may be connected, and the desktop approves it.** The
+  correct password only earns a *claim*; `Share.claim()` parks the address as
+  pending and emits a `claim` event, and nothing is served until SwordFM answers
+  `allow`. Without this, anyone who glimpsed the QR code over your shoulder is as
+  authorised as your own phone and you would never know they were there. Every
+  request re-checks the client address, so a stolen cookie is useless from an
+  unapproved device. `release` clears the pairing *and* rotates the signing key,
+  invalidating the old session.
 - **Binds to the LAN address, never `0.0.0.0`.** `lan_ip()` gets it by
   connecting a UDP socket (no packet is sent); resolving the hostname instead
   usually just returns `127.0.0.1`.
@@ -408,6 +431,11 @@ and text alike for a crisp downscale.
 
 - `QFileSystemModel` populates **asynchronously**. Anything touching a directory
   right after `setRootPath()` must wait for `directoryLoaded`.
+- **Never give a key both a `QShortcut` and a menu action.** Two objects claiming
+  one sequence makes it *ambiguous*, and Qt responds by firing neither — silently.
+  This had broken Ctrl+A, Space, Ctrl+C/X/V, Delete and F2 all at once. Menu
+  actions own their keys; the constructor's `QShortcut` list is only for keys with
+  no menu entry.
 - Marks are keyed by absolute path, not index, so they survive navigation and
   model resets.
 - The search page breaks the "everything is a filesystem index" assumption. New
@@ -415,5 +443,6 @@ and text alike for a crisp downscale.
 - Filters never hide directories, on purpose.
 - Recursive search will not cross a mount point. If results from a cloud mount
   are missing, that is deliberate — navigate into the mount and search there.
-- The share server is reachable by anything on your local network that knows the
-  password. Closing the dialog stops it; there is no background mode.
+- The share server is reachable only by the one device you approved, and only
+  while the dialog is open. Closing it stops the server; there is no background
+  mode.

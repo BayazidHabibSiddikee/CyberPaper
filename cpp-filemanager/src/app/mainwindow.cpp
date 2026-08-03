@@ -59,32 +59,16 @@ MainWindow::MainWindow(const QString &startPath, QWidget *parent)
     setupUi();
     setupMenus();
 
-    // Navigation
+    // Shortcuts that have no menu entry of their own.
+    //
+    // Anything already carrying a QKeySequence in setupMenus() must NOT be
+    // repeated here: two objects claiming one key makes the shortcut
+    // *ambiguous*, and Qt responds by firing neither. That is what silently
+    // broke Ctrl+A, Space, Ctrl+C/X/V, Delete and F2 all at once.
     new QShortcut(QKeySequence("Ctrl+L"), this, [this]() { m_toolbar->focusPath(); });
-    new QShortcut(QKeySequence("Alt+Left"), this, [this]() { navigateBack(); });
-    new QShortcut(QKeySequence("Alt+Right"), this, [this]() { navigateForward(); });
-    new QShortcut(QKeySequence("Alt+Up"), this, [this]() { navigateUp(); });
     new QShortcut(QKeySequence("Backspace"), this, [this]() { navigateUp(); });
     new QShortcut(QKeySequence("F5"), this, [this]() { refresh(); });
-    new QShortcut(QKeySequence("Ctrl+H"), this, [this]() { toggleHidden(); });
-    new QShortcut(QKeySequence("Ctrl+1"), this, [this]() {
-        if (!m_fileView->isDetailsMode()) toggleViewMode();
-    });
-    new QShortcut(QKeySequence("Ctrl+2"), this, [this]() {
-        if (m_fileView->isDetailsMode()) toggleViewMode();
-    });
-
-    // Edit
-    new QShortcut(QKeySequence::SelectAll, this, [this]() { selectAll(); });
-    new QShortcut(QKeySequence::Copy, this, [this]() { copySelection(); });
-    new QShortcut(QKeySequence::Cut, this, [this]() { cutSelection(); });
-    new QShortcut(QKeySequence::Paste, this, [this]() { pasteClipboard(); });
-    new QShortcut(QKeySequence::Delete, this, [this]() { deleteSelection(); });
-    new QShortcut(QKeySequence("F2"), this, [this]() { renameSelected(); });
-    new QShortcut(QKeySequence("Ctrl+Shift+N"), this, [this]() { createNewFolder(); });
     new QShortcut(QKeySequence("Ctrl+N"), this, [this]() { createNewFolder(); });
-    new QShortcut(QKeySequence("Space"), this, [this]() { previewSelected(); });
-    new QShortcut(QKeySequence("F3"), this, [this]() { previewSelected(); });
 
     if (isHiddenSystemRoot(m_currentPath))
         m_currentPath = QDir::homePath();
@@ -216,8 +200,7 @@ void MainWindow::setupMenus() {
     viewMenu->addSeparator();
     viewMenu->addAction("Show &Hidden Files", QKeySequence("Ctrl+H"),
                         this, &MainWindow::toggleHidden);
-    viewMenu->addAction("&Preview Panel", QKeySequence("F3"),
-                        this, &MainWindow::previewSelected);
+    viewMenu->addAction("&Preview Panel", this, &MainWindow::previewSelected);
     viewMenu->addAction(QIcon::fromTheme("view-refresh"), "&Refresh",
                         QKeySequence::Refresh, this, &MainWindow::refresh);
 
