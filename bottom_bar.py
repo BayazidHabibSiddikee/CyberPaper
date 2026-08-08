@@ -193,6 +193,9 @@ class BottomBar(QWidget):
         self._stats = {}
         self._ws = []
         self._ws_rects = []   # (x0, x1, name) for click handling
+        self._win_rect = None          # (x0, x1) of the current-window button
+        self._hover_win = False        # mouse over the current-window button
+        self.setMouseTracking(True)    # so we can highlight the button on hover
 
         t = QTimer(self); t.timeout.connect(self._refresh); t.start(2000)
         tw = QTimer(self); tw.timeout.connect(self._refresh_ws); tw.start(500)
@@ -218,12 +221,33 @@ class BottomBar(QWidget):
 
     def mousePressEvent(self, e):
         x = int(e.position().x())
+        # Current-window button (far-left): open the window switcher.
+        if self._win_rect and self._win_rect[0] <= x <= self._win_rect[1]:
+            subprocess.Popen(["rofi", "-show", "window"],
+                             start_new_session=True,
+                             stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+            return
+        # Workspace buttons
         for x0, x1, name in self._ws_rects:
             if x0 <= x <= x1:
                 subprocess.Popen(["i3-msg", "workspace", name],
                                  stdout=subprocess.DEVNULL,
                                  stderr=subprocess.DEVNULL)
                 return
+
+    def mouseMoveEvent(self, e):
+        x = int(e.position().x())
+        hov = bool(self._win_rect) and (self._win_rect[0] <= x <= self._win_rect[1])
+        if hov != self._hover_win:
+            self._hover_win = hov
+            self.update()
+
+    def leaveEvent(self, e):
+        if self._hover_win:
+            self._hover_win = False
+            self.update()
+        super().leaveEvent(e)
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -235,9 +259,25 @@ class BottomBar(QWidget):
         fm = QFontMetrics(f)
         y = H - (H - fm.ascent()) // 2 - 2
 
+        # ── Current-window button (left-bottom corner) ────────────────
+        x = 6
+        win_label = self._stats.get("win", "▣ none")
+        if len(win_label) > 28:
+            win_label = win_label[:28] + "…"
+        ww = fm.horizontalAdvance(win_label) + 18
+        self._win_rect = (x, x + ww)
+        p.setPen(Qt.NoPen)
+        if self._hover_win:
+            p.setBrush(WS_BG.lighter(130))
+        else:
+            p.setBrush(WS_BG)
+        p.drawRoundedRect(x, 3, ww, H - 6, 3, 3)
+        p.setPen(CYAN)
+        p.drawText(x + 7, y, win_label)
+        x += ww + 6
+
         # ── Workspaces (clickable) ───────────────────────────────────
         self._ws_rects = []
-        x = 6
         for name, focused, urgent in self._ws:
             tw = fm.horizontalAdvance(name)
             bw = tw + 14
