@@ -54,15 +54,19 @@ _restart_glava() {
     local res sw sh gw gh gy
     res="$(screen_size)"; res="${res:-1920x1080}"
     sw="${res%x*}"; sh="${res#*x}"
-    gw=$sw; gh=22; gy=$(( sh - BOTTOM_H - gh ))
+    # glava honours heights above its 50px minimum. Use a ~140px bottom
+    # visualizer whose bottom edge meets the top of the 32px dock bar.
+    gw=$sw; gh=140; gy=$(( sh - BOTTOM_H - gh ))
 
     if command -v xwinwrap >/dev/null; then
+        # No `--desktop`: it forces glava's window to 0,0 (top-left). Dropping
+        # it + explicit setgeometry Y below places the visualizer at the bottom.
         nohup xwinwrap -ov -ni -b -argb -g ${gw}x${gh}+0+${gy} -- \
-            glava --desktop -m "$mode" -r "setgeometry 0 0 $gw $gh" \
+            glava -m "$mode" -r "setgeometry 0 $gy $gw $gh" \
             > "$CFG_DIR/glava.log" 2>&1 &
     else
-        nohup glava --desktop -m "$mode" \
-            -r "setgeometry 0 0 $gw $gh" \
+        nohup glava -m "$mode" \
+            -r "setgeometry 0 $gy $gw $gh" \
             > "$CFG_DIR/glava.log" 2>&1 &
     fi
     echo $! > "$GLAVA_PID_FILE"

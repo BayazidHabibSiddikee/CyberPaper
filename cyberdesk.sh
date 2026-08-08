@@ -73,20 +73,29 @@ _restart_glava() {
     local res sw sh gw gh gy
     res="$(screen_size)"; res="${res:-1920x1080}"
     sw="${res%x*}"; sh="${res#*x}"
-    gw=$sw; gh=22; gy=$(( sh - BOTTOM_H - gh ))
+    # glava enforces a 50px minimum window height but honours larger heights.
+    # Make it a prominent bottom visualizer (~140px) whose bottom edge lands on
+    # the top of the 32px dock bar, so it never spills over it.
+    gw=$sw; gh=140; gy=$(( sh - BOTTOM_H - gh ))
 
+    # NOTE: we deliberately do NOT pass `--desktop` to glava. With `--desktop`
+    # glava forces its own window to 0,0 (the TOP-LEFT of the screen) and
+    # ignores the requested geometry, so the visualizer ended up at the top
+    # instead of the bottom. Dropping it lets glava honour the explicit
+    # `setgeometry 0 <gy> ...` Y below, placing it along the bottom edge,
+    # just above the dock bar. xwinwrap still provides click-through (-ni),
+    # stacking (-b) and ARGB transparency (-argb).
     if command -v xwinwrap >/dev/null; then
         # -ni = click-through (empty input shape, the ONLY reliable mechanism)
         # -b  = below all normal windows — xwinwrap's real "stay behind" flag
         # -ov = override_redirect, so the WM never touches stacking/focus
         # -argb = ARGB visual for transparency
-        # --desktop on glava = transparent background (GLava's own ARGB setup)
         nohup xwinwrap -ov -ni -b -argb -g ${gw}x${gh}+0+${gy} -- \
-            glava --desktop -m "$mode" -r "setgeometry 0 0 $gw $gh" \
+            glava -m "$mode" -r "setgeometry 0 $gy $gw $gh" \
             > "$CFG_DIR/glava.log" 2>&1 &
     else
-        nohup glava --desktop -m "$mode" \
-            -r "setgeometry 0 0 $gw $gh" \
+        nohup glava -m "$mode" \
+            -r "setgeometry 0 $gy $gw $gh" \
             > "$CFG_DIR/glava.log" 2>&1 &
     fi
     echo $! > "$GLAVA_PID_FILE"
@@ -144,6 +153,13 @@ _sed_color() {
 }
 
 start() {
+    # Safety net: kill any stray cyberdeck instance first. Two decks = two
+    # 'sworddeck-bar' dock windows, which i3 stacks on top of each other at the
+    # bottom of the screen (one at y=1016, one at y=1048) — the "double bar"
+    # seen when start() was called while an older, untracked deck was alive.
+    pkill -f "cyberdeck\.py" 2>/dev/null
+    sleep 0.3
+
     if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
         echo "cyberdeck already running (PID $(cat "$PID_FILE")). Use restart."
         exit 0
@@ -176,9 +192,9 @@ stop() {
         pid=$(cat "$PID_FILE")
         kill "$pid" 2>/dev/null && echo "cyberdeck stopped (PID $pid)" || echo "already dead"
         rm -f "$PID_FILE"
-    else
-        pkill -f "python3.*cyberdeck.py" 2>/dev/null && echo "stopped" || echo "not running"
     fi
+    # Always sweep strays so a stop/restart can never leave a duplicate bar.
+    pkill -f "cyberdeck\.py" 2>/dev/null
     if [ -f "$GLAVA_PID_FILE" ]; then
         kill "$(cat "$GLAVA_PID_FILE")" 2>/dev/null
         rm -f "$GLAVA_PID_FILE"

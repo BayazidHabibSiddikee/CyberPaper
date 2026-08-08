@@ -613,12 +613,13 @@ fi
     def _place_dock(self):
         self._dock.adjustSize()
         dw = self.width() - 24
-        max_height = self.height() - 24
+        # Anchor the dock just below the painted content (the QUICK KEYS
+        # section ends at self._stats_bottom) instead of at the bottom of the
+        # panel, so it hugs the content and there is no dead gap after it.
+        top = self._stats_bottom + 6
+        max_height = max(self.height() - top - 12, 0)
         scroll_height = min(self._dock.height(), max_height)
-        y = self.height() - scroll_height - 12
-        y = max(12, y)
-        scroll_height = min(scroll_height, self.height() - y - 12)
-        self._dock_scroll.setGeometry(12, y, dw, max(scroll_height, 0))
+        self._dock_scroll.setGeometry(12, top, dw, scroll_height)
 
     def resizeEvent(self, e):
         self._place_dock()
