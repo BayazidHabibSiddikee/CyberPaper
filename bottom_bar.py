@@ -194,6 +194,8 @@ class BottomBar(QWidget):
         self._ws = []
         self._ws_rects = []   # (x0, x1, name) for click handling
         self._win_rect = None          # (x0, x1) of the current-window button
+self._win_rect = None          # (x0, x1) of the current-window button
+        self._hover_win = False        # mouse over the current-window button\n        self._current_ws_name = \"\"   # current workspace name for display\n        self.setMouseTracking(True)    # so we can highlight the button on hover
         self._hover_win = False        # mouse over the current-window button
         self.setMouseTracking(True)    # so we can highlight the button on hover
 
@@ -210,24 +212,30 @@ class BottomBar(QWidget):
             "vol": _volume(), "win": _active_window(),
         }
         self.update()
-
-    def _refresh_ws(self):
+def _refresh_ws(self):
         ws = _workspaces()
         win = _active_window()
-        if ws != self._ws or win != self._stats.get("win"):
+        if ws != self._ws or win != self._stats.get(\"win\"):
             self._ws = ws
+            # Store current focused workspace name for display
+            self._current_ws_name = ""
+            for name, focused, _ in ws:
+                if focused:
+                    self._current_ws_name = name
+                    break
             self._stats["win"] = win
             self.update()
 
-    def mousePressEvent(self, e):
+def mousePressEvent(self, e):
         x = int(e.position().x())
-        # Current-window button (far-left): open the window switcher.
-        if self._win_rect and self._win_rect[0] <= x <= self._win_rect[1]:
-            subprocess.Popen(["rofi", "-show", "window"],
-                             start_new_session=True,
-                             stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL)
-            return
+        # Switch workspace on click
+        for x0, x1, name in self._ws_rects:
+            if x0 <= x <= x1:
+                subprocess.Popen([\"i3-msg\", \"workspace\", name],
+                                 stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL)
+                return
+
         # Workspace buttons
         for x0, x1, name in self._ws_rects:
             if x0 <= x <= x1:
@@ -261,7 +269,7 @@ class BottomBar(QWidget):
 
         # ── Current-window button (left-bottom corner) ────────────────
         x = 6
-        win_label = self._stats.get("win", "▣ none")
+win_label = self._current_ws_name if self._current_ws_name else \"▣ none\"
         if len(win_label) > 28:
             win_label = win_label[:28] + "…"
         ww = fm.horizontalAdvance(win_label) + 18
