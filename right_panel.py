@@ -2,7 +2,7 @@
 import os, json, glob, shlex, subprocess
 from PySide6.QtWidgets import (
     QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QLabel,
-    QLineEdit, QScrollArea,
+    QLineEdit, QScrollArea, QFrame,
 )
 from PySide6.QtCore import Qt, QTimer, QRect
 from PySide6.QtGui import QPainter, QColor, QFont, QPen, QFontMetrics
@@ -12,6 +12,8 @@ from pipes_layer import PipesLayer
 CFG_DIR        = os.path.expanduser("~/.config/animated-wallpaper")
 APPS_JSON      = os.path.join(CFG_DIR, "apps.json")
 NET_IFACE_FILE = os.path.join(CFG_DIR, "net_iface")
+GLAVA_MODE_FILE  = os.path.join(CFG_DIR, "glava.mode")
+GLAVA_THEME_FILE = os.path.join(CFG_DIR, "glava.theme")
 HERE      = os.path.dirname(os.path.abspath(__file__))
 
 DEFAULT_APPS = [
@@ -234,8 +236,21 @@ class RightPanel(QWidget):
 
     # ── App launcher / settings dock (bottom of the panel) ──────────
     def _build_dock(self):
-        self._dock = QWidget(self)
+        # Create scroll area for the dock to handle overflow
+        self._dock_scroll = QScrollArea(self)
+        self._dock_scroll.setWidgetResizable(True)
+        self._dock_scroll.setFrameShape(QScrollArea.NoFrame)
+        self._dock_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self._dock_scroll.viewport().setStyleSheet("background: transparent;")
+        self._dock_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._dock_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
+        # The actual dock content widget
+        self._dock = QWidget()
         self._dock.setAttribute(Qt.WA_TranslucentBackground)
+        self._dock.setStyleSheet("background: transparent;")
+        self._dock_scroll.setWidget(self._dock)
+        
         lay = QVBoxLayout(self._dock)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(4)
@@ -318,29 +333,71 @@ class RightPanel(QWidget):
         self._app_scroll = scroll
         lay.addWidget(scroll)
 
-        label("── SETTINGS ──")
-        for b in (
-            button("  Edit graph",    lambda: self._launch(os.path.join(HERE, "graph-edit.sh"))),
-            button("  Audio mixer",   lambda: self._launch("pavucontrol")),
-            button("  Choose network…", self._choose_network),
-            button("  Wifi radio on/off", self._toggle_wifi),
-            button("  Mute on/off",   lambda: self._launch(
-                "pactl set-sink-mute @DEFAULT_SINK@ toggle")),
-        ):
-            lay.addWidget(b)
-        self._redshift_btn = button("", self._toggle_redshift, "#e5c07b")
-        lay.addWidget(self._redshift_btn)
-        self._update_redshift_label()
+        # ── GLava ON/OFF (always visible, outside collapsible) ──
+        glava_sep = QFrame(self._dock)
+        glava_sep.setFrameShape(QFrame.HLine)
+        glava_sep.setStyleSheet("color: #c678dd;")
+        lay.addWidget(glava_sep)
+
         self._glava_btn = button("", self._toggle_glava, "#c678dd")
         lay.addWidget(self._glava_btn)
         self._update_glava_label()
+
+        # ── SETTINGS (collapsible) ───────────────────────────────
+        self._settings_toggle = button("▸ SETTINGS", self._toggle_settings, "#c8dcff")
+        lay.addWidget(self._settings_toggle)
+
+        self._settings_holder = QWidget()
+        self._settings_holder.setStyleSheet("background: transparent;")
+        settings_lay = QVBoxLayout(self._settings_holder)
+        settings_lay.setContentsMargins(0, 0, 0, 0)
+        settings_lay.setSpacing(4)
+
         for b in (
-            button("  Config folder", lambda: self._launch(f"xdg-open {CFG_DIR}")),
-            button("  Restart deck",  self._restart_deck, "#e5c07b"),
+            button("  Edit graph",    lambda: self._launch(os.path.join(HERE, "graph-edit.sh")), parent=self._settings_holder),
+            button("  Audio mixer",   lambda: self._launch("pavucontrol"), parent=self._settings_holder),
+            button("  Choose network…", self._choose_network, parent=self._settings_holder),
+            button("  Wifi radio on/off", self._toggle_wifi, parent=self._settings_holder),
+            button("  Mute on/off",   lambda: self._launch(
+                "pactl set-sink-mute @DEFAULT_SINK@ toggle"), parent=self._settings_holder),
         ):
-            lay.addWidget(b)
+            settings_lay.addWidget(b)
+        self._redshift_btn = button("", self._toggle_redshift, "#e5c07b", parent=self._settings_holder)
+        settings_lay.addWidget(self._redshift_btn)
+        self._update_redshift_label()
+
+        # ── GLava controls section ───────────────────────────────
+        glava_sep = QFrame(self._settings_holder)
+        glava_sep.setFrameShape(QFrame.HLine)
+        glava_sep.setStyleSheet("color: #c678dd;")
+        settings_lay.addWidget(glava_sep)
+
+        self._glava_mode_btn = button("", self._cycle_glava_mode, "#61afef", parent=self._settings_holder)
+        settings_lay.addWidget(self._glava_mode_btn)
+        self._update_glava_mode_label()
+
+        self._glava_theme_btn = button("", self._cycle_glava_theme, "#98c379", parent=self._settings_holder)
+        settings_lay.addWidget(self._glava_theme_btn)
+        self._update_glava_theme_label()
+
+        for b in (
+            button("  Config folder", lambda: self._launch(f"xdg-open {CFG_DIR}"), parent=self._settings_holder),
+            button("  Restart deck",  self._restart_deck, "#e5c07b", parent=self._settings_holder),
+        ):
+            settings_lay.addWidget(b)
+
+        self._settings_scroll = QScrollArea(self._dock)
+        self._settings_scroll.setWidget(self._settings_holder)
+        self._settings_scroll.setWidgetResizable(True)
+        self._settings_scroll.setFrameShape(QScrollArea.NoFrame)
+        self._settings_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self._settings_scroll.viewport().setStyleSheet("background: transparent;")
+        self._settings_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._settings_scroll.setVisible(False)
+        lay.addWidget(self._settings_scroll)
 
         self._dock.adjustSize()
+        self._place_dock()
 
     # ── X input focus for the search box ─────────────────────────
     # The deck is an override-redirect window: i3 never assigns keyboard
@@ -445,22 +502,31 @@ fi
             open(self._REDSHIFT_FLAG, "w").close()
         self._update_redshift_label()
 
-    # glava toggle: start/stop audio visualizer
+    # ── GLava controls ────────────────────────────────────────────
     _GLAVA_PID_FILE = os.path.join(CFG_DIR, "glava.pid")
+    GLAVA_MODES = ["graph", "bars", "wave", "radial"]
+    GLAVA_THEMES = ["cyan", "green", "purple", "red", "rainbow", "sunset"]
+
+    def _read_file(self, path, default=""):
+        try:
+            return open(path).read().strip()
+        except Exception:
+            return default
+
+    def _is_glava_running(self):
+        if not os.path.exists(self._GLAVA_PID_FILE):
+            return False
+        try:
+            pid = int(open(self._GLAVA_PID_FILE).read().strip())
+            import signal
+            os.kill(pid, 0)
+            return True
+        except (ValueError, ProcessLookupError, PermissionError):
+            return False
 
     def _update_glava_label(self):
-        running = os.path.exists(self._GLAVA_PID_FILE) and \
-                  os.path.isfile(self._GLAVA_PID_FILE)
-        if running:
-            try:
-                pid = int(open(self._GLAVA_PID_FILE).read().strip())
-                import signal
-                os.kill(pid, 0)  # check if alive
-                self._glava_btn.setText("  Audio Visualizer: ON")
-                return
-            except (ValueError, ProcessLookupError, PermissionError):
-                pass
-        self._glava_btn.setText("  Audio Visualizer: OFF")
+        running = self._is_glava_running()
+        self._glava_btn.setText("  Audio Visualizer: ON" if running else "  Audio Visualizer: OFF")
 
     def _toggle_glava(self):
         subprocess.Popen(
@@ -468,8 +534,61 @@ fi
             start_new_session=True,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
-        # Wait a moment for glava to start/stop, then update label
         QTimer.singleShot(500, self._update_glava_label)
+
+    def _update_glava_mode_label(self):
+        mode = self._read_file(GLAVA_MODE_FILE, "graph")
+        self._glava_mode_btn.setText(f"  Design: {mode}")
+
+    def _cycle_glava_mode(self):
+        current = self._read_file(GLAVA_MODE_FILE, "graph")
+        try:
+            idx = self.GLAVA_MODES.index(current)
+        except ValueError:
+            idx = 0
+        next_mode = self.GLAVA_MODES[(idx + 1) % len(self.GLAVA_MODES)]
+        subprocess.Popen(
+            [os.path.join(HERE, "cyberdesk.sh"), "glava-mode", next_mode],
+            start_new_session=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        QTimer.singleShot(300, self._update_glava_mode_label)
+
+    def _update_glava_theme_label(self):
+        theme = self._read_file(GLAVA_THEME_FILE, "cyan")
+        self._glava_theme_btn.setText(f"  Theme: {theme}")
+
+    def _cycle_glava_theme(self):
+        current = self._read_file(GLAVA_THEME_FILE, "cyan")
+        try:
+            idx = self.GLAVA_THEMES.index(current)
+        except ValueError:
+            idx = 0
+        next_theme = self.GLAVA_THEMES[(idx + 1) % len(self.GLAVA_THEMES)]
+        subprocess.Popen(
+            [os.path.join(HERE, "cyberdesk.sh"), "glava-theme", next_theme],
+            start_new_session=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        QTimer.singleShot(300, self._update_glava_theme_label)
+
+    # ── Settings toggle ──────────────────────────────────────────
+    _settings_open = False
+
+    def _toggle_settings(self):
+        self._settings_open = not self._settings_open
+        if self._settings_open:
+            # Show 8 settings items visible, scrollable if more
+            btn_h = 26  # approximate button height
+            spacing = 4
+            visible_items = 8
+            settings_h = visible_items * btn_h + (visible_items - 1) * spacing
+            self._settings_scroll.setFixedHeight(settings_h)
+        self._settings_scroll.setVisible(self._settings_open)
+        self._settings_toggle.setText(
+            "▾ SETTINGS" if self._settings_open else "▸ SETTINGS")
+        self._dock.adjustSize()
+        self._place_dock()
 
     def _restart_deck(self):
         subprocess.Popen([os.path.join(HERE, "cyberdesk.sh"), "restart"],
@@ -483,21 +602,23 @@ fi
             return
         if mt != self._apps_mtime:
             self._apps_mtime = mt
-            self._dock.deleteLater()
+            # Delete both scroll area and dock
+            if hasattr(self, '_dock_scroll'):
+                self._dock_scroll.deleteLater()
+            if hasattr(self, '_dock'):
+                self._dock.deleteLater()
             self._build_dock()
-            self._dock.show()
             self._place_dock()
 
     def _place_dock(self):
         self._dock.adjustSize()
         dw = self.width() - 24
-        # Prefer anchoring to the bottom (original look), but never let the
-        # dock creep up higher than the painted stats block actually ends —
-        # this is what caused "QUICK KEYS" to overlap the app search box.
-        bottom_anchor = self.height() - self._dock.height() - 12
-        top_anchor    = self._stats_bottom + 10
-        y = max(bottom_anchor, top_anchor)
-        self._dock.setGeometry(12, y, dw, self._dock.height())
+        max_height = self.height() - 24
+        scroll_height = min(self._dock.height(), max_height)
+        y = self.height() - scroll_height - 12
+        y = max(12, y)
+        scroll_height = min(scroll_height, self.height() - y - 12)
+        self._dock_scroll.setGeometry(12, y, dw, max(scroll_height, 0))
 
     def resizeEvent(self, e):
         self._place_dock()
