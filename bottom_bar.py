@@ -259,22 +259,9 @@ class BottomBar(QWidget):
         fm = QFontMetrics(f)
         y = H - (H - fm.ascent()) // 2 - 2
 
-        # ── Current-window button (left-bottom corner) ────────────────
+        # Workspaces start at the left edge. The active-window button now lives
+        # in the center of the bar (rendered below after the stats).
         x = 6
-        win_label = self._stats.get("win", "▣ none")
-        if len(win_label) > 28:
-            win_label = win_label[:28] + "…"
-        ww = fm.horizontalAdvance(win_label) + 18
-        self._win_rect = (x, x + ww)
-        p.setPen(Qt.NoPen)
-        if self._hover_win:
-            p.setBrush(WS_BG.lighter(130))
-        else:
-            p.setBrush(WS_BG)
-        p.drawRoundedRect(x, 3, ww, H - 6, 3, 3)
-        p.setPen(CYAN)
-        p.drawText(x + 7, y, win_label)
-        x += ww + 6
 
         # ── Workspaces (clickable) ───────────────────────────────────
         self._ws_rects = []
@@ -319,12 +306,24 @@ class BottomBar(QWidget):
             (DIM,            SEP),
             (CYAN,           s.get("net", "?")),
             (DIM,            SEP),
-            (GREEN,          s.get("win", "▣ none")),
         ]
         for color, text in parts:
             p.setPen(color)
             p.drawText(x, y, text)
             x += fm.horizontalAdvance(text)
+
+        # ── Active-window button (center, clickable -> rofi window switcher) ──
+        win_label = self._stats.get("win", "▣ none")
+        if len(win_label) > 28:
+            win_label = win_label[:28] + "…"
+        ww = fm.horizontalAdvance(win_label) + 18
+        self._win_rect = (x, x + ww)
+        p.setPen(Qt.NoPen)
+        p.setBrush(WS_BG.lighter(130) if self._hover_win else WS_BG)
+        p.drawRoundedRect(x, 3, ww, H - 6, 3, 3)
+        p.setPen(CYAN)
+        p.drawText(x + 7, y, win_label)
+        x += ww + 6
 
         # ── Right-aligned: wifi · volume · battery · uptime ─────────
         right = [
