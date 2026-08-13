@@ -23,17 +23,21 @@ File manager open over the cyberdeck — glava visualizer visible at the bottom,
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  Normal Windows (browsers, terminals, etc.)     │  ← TOP
+│  Glava (audio visualizer, matrix rain)          │  ← TOP
+│        transparent + click-through; never grabs │
+│        mouse or keyboard focus                  │
 ├─────────────────────────────────────────────────┤
-│  Cyberdeck (panels, clock, graphs, stats)       │  ← MIDDLE
+│  Normal Windows (browsers, terminals, etc.)     │  ← MIDDLE
 ├─────────────────────────────────────────────────┤
-│  Glava (audio visualizer, matrix rain)          │  ← BOTTOM
+│  Cyberdeck (panels, clock, graphs, stats)       │  ← BOTTOM
 └─────────────────────────────────────────────────┘
 ```
 
-- **Glava**: `_NET_WM_WINDOW_TYPE_DESKTOP` — absolute lowest layer
-- **Cyberdeck**: `_NET_WM_STATE_BELOW` — above glava, below all apps
-- All apps open on top automatically
+- **Glava**: `_NET_WM_STATE_ABOVE` — floating & sticky overlay on top of every
+  window. Transparent background (ARGB + compositor) and empty input shape (`-ni`)
+  so clicks/keys pass straight through to the app below. Launched via `xwinwrap -ov -ni -argb`.
+- **Cyberdeck**: `_NET_WM_STATE_BELOW` — above the wallpaper, below all apps.
+- All normal apps open on top of the cyberdeck automatically.
 
 ## Features
 
@@ -41,7 +45,7 @@ File manager open over the cyberdeck — glava visualizer visible at the bottom,
 - **Mission Graph** — visual node graph rendered via graphviz, editable through rofi
 - **System Stats** — CPU, RAM, disk, network, top processes, battery, uptime
 - **App Launcher** — quick-launch apps from a configurable list
-- **Audio Visualizer** — full-screen glava graph behind the cyberdeck
+- **Audio Visualizer** — glava spectrum on top of all windows (transparent & click-through; bottom strip)
 - **Dock Bar** — replaces i3bar with workspaces, stats, wifi, volume
 - **Quick Settings** — redshift, audio mixer, wifi toggle, mute toggle
 - **One Dark Theme** — matching color scheme across all components
