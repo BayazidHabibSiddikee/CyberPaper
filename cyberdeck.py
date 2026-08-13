@@ -21,6 +21,7 @@ from main_panel   import MainPanel
 from right_panel  import RightPanel
 from bottom_bar   import BottomBar
 from spectrum_overlay import SpectrumOverlay
+from bubbles_layer import BubblesLayer
 
 
 def setup_x11_below(wid):
@@ -90,6 +91,10 @@ class CyberDeck(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
+        # Bubble background: runs behind all panels as a single shared
+        # physics field so bubbles drift across the whole deck seamlessly.
+        self._bubbles = BubblesLayer(self, count=24, max_alpha=22, edge_margin=80)
+
         # Top strip: 3 columns
         cols_widget = QWidget(self)
         cols_widget.setAttribute(Qt.WA_TranslucentBackground)
@@ -155,7 +160,13 @@ class CyberDeck(QWidget):
         # on top of this same flat background).
         p = QPainter(self)
         p.fillRect(self.rect(), QColor(40, 44, 52, 255))
+        # ── Bubble background layer ────────────────────────────
+        self._bubbles.paint(p)
         p.end()
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._bubbles.on_resize(self.width(), self.height())
 
     def keyPressEvent(self, e):
         # Ctrl+C / Escape quit
