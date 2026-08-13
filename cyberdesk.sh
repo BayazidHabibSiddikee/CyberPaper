@@ -84,11 +84,12 @@ _restart_glava() {
     # instead of the bottom. Dropping it lets glava honour the explicit
     # `setgeometry 0 <gy> ...` Y below, placing it along the bottom edge,
     # just above the dock bar. xwinwrap still provides click-through (-ni),
-    # on-top stacking (remove -b, raise below) and ARGB transparency (-argb).
+    # on-top stacking (no -b, raised above) and ARGB transparency (-argb).
     if command -v xwinwrap >/dev/null; then
         # -ni  = click-through (empty input shape — the ONLY reliable way to
         #        guarantee the mouse passes straight through to windows below)
-        # -ov  = override_redirect, so the WM never restacks it below apps
+        # -ov  = override_redirect, so the WM ignores the wrapper (it stays on
+        #        top by default; glava's own window is floated separately below)
         # -argb = ARGB visual so the background is truly transparent (compositor
         #        blends the bars over whatever is underneath)
         # NOTE: deliberately no -b (below) — we want this ON TOP of all windows.
