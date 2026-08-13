@@ -106,30 +106,36 @@ _restart_glava() {
     sleep 0.5
     _apply_glava_theme "$theme"
 
-    # Make glava an ON-TOP overlay (above all normal windows), not a background:
-    #   - click-through (never grabs the mouse — empty input shape via -ni)
-    #   - _NET_WM_WINDOW_TYPE_UTILITY = floating overlay, no taskbar entry,
-    #     won't steal keyboard focus
-    #   - _NET_WM_STATE_ABOVE = composited above ALL windows (the requested
-    #     "in front of everything" behaviour)
-    #   - SKIP_TASKBAR/SKIP_PAGER/STICKY = no window-list entry, follows workspaces
-    #   - windowraise lifts it to the top of the X stacking order, which matters
-    #     because override_redirect windows are not restacked by the WM
-    # xwinwrap launches it as a NORMAL window, so we re-class it each start.
-    # Scope the search to the PID we just spawned so a stale GLava window from
-    # a previous toggle can never be grabbed by mistake.
+    # Make glava an ON-TOP overlay (above all normal windows):
+    #   - click-through: mouse passes through (empty input shape via -ni)
+    #   - transparent background: ARGB visual composited by picom
+    #     (rc.glsl setopacity "native" + setbg 00000000)
+    # xwinwrap launches glava as a managed window, so we re-class it on each
+    # start to keep that overlay behaviour. Search by the PID we just spawned so
+    # a stale GLava window from a previous toggle is never grabbed by mistake.
     if command -v xdotool >/dev/null && command -v xprop >/dev/null; then
         gid=$(xdotool search --pid "$gpid" --class GLava 2>/dev/null | head -1)
         [ -z "$gid" ] && gid=$(xdotool search --class GLava 2>/dev/null | head -1)
         if [ -n "$gid" ]; then
-            xprop -id "$gid" -f _NET_WM_WINDOW_TYPE 32a \
-                -set _NET_WM_WINDOW_TYPE _NET_WM_WINDOW_TYPE_UTILITY
-            xprop -id "$gid" -f _NET_WM_STATE 32a \
-                -set _NET_WM_STATE _NET_WM_STATE_ABOVE,_NET_WM_STATE_SKIP_TASKBAR,_NET_WM_STATE_SKIP_PAGER,_NET_WM_STATE_STICKY
+            # UTILITY type = no taskbar/pager entry, won't steal keyboard focus.
+            xprop -id "$gid" -f _NET_WM_WINDOW_TYPE 32a                 -set _NET_WM_WINDOW_TYPE _NET_WM_WINDOW_TYPE_UTILITY
+            # ABOVE = composited above ALL windows ("in front of everything").
+            # STICKY = stays visible across workspaces.
+            xprop -id "$gid" -f _NET_WM_STATE 32a                 -set _NET_WM_STATE _NET_WM_STATE_ABOVE,_NET_WM_STATE_SKIP_TASKBAR,_NET_WM_STATE_SKIP_PAGER,_NET_WM_STATE_STICKY
+            # NOTE: these hints alone do NOT float the window under i3. i3 does
+            # not auto-float a UTILITY window, so it TILES glava (we watched it
+            # snap to a 945x1024 column, the black block covering the screen).
+            # Forcing i3 to float + sticky it makes it render at its natural
+            # 1920x140 strip and keeps it pinned ABOVE every other window. On
+            # non-i3 WMs the hints above plus xwinwrap's -ov ordering already win.
+            if command -v i3-msg >/dev/null; then
+                i3-msg "[id=$gid] floating enable, sticky enable" >/dev/null 2>&1 || true
+            fi
             xdotool windowraise "$gid" 2>/dev/null || true
         fi
     fi
 }
+
 
 # Apply color theme to GLava graph shader
 _apply_glava_theme() {
