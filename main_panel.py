@@ -58,15 +58,7 @@ class MainPanel(QWidget):
             QPushButton:hover { background: rgba(97, 175, 239, 200); border-color: #61afef; }
         """
 
-        self._edit_btn = QPushButton("✚ EDIT GRAPH", self)
-        self._edit_btn.setCursor(Qt.PointingHandCursor)
-        self._edit_btn.setStyleSheet(btn_style)
-        self._edit_btn.clicked.connect(self._edit_graph)
-
-        self._fm_btn = QPushButton("📁 SWORDFM", self)
-        self._fm_btn.setCursor(Qt.PointingHandCursor)
-        self._fm_btn.setStyleSheet(btn_style)
-        self._fm_btn.clicked.connect(self._open_fm)
+        
 
     def _edit_graph(self):
         script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "graph-edit.sh")
@@ -75,17 +67,7 @@ class MainPanel(QWidget):
     def _open_fm(self):
         subprocess.Popen(["swordfm"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    def resizeEvent(self, e):
-        w = self.width()
-        self._edit_btn.adjustSize()
-        self._fm_btn.adjustSize()
-        gap = 8
-        total = self._edit_btn.width() + gap + self._fm_btn.width()
-        x = w - total - 16
-        y = self.height() - 56
-        self._edit_btn.move(x, y)
-        self._fm_btn.move(x + self._edit_btn.width() + gap, y)
-        super().resizeEvent(e)
+    pass
 
     def _load_graph(self):
         try:
