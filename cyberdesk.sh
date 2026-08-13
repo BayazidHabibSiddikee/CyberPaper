@@ -70,7 +70,7 @@ _restart_glava() {
         echo "install it (usually 'xwinwrap' or 'xwinwrap-git' in your package manager)" >&2
     fi
 
-    local res sw sh gw gh gy
+    local res sw sh gw gh gy gpid
     res="$(screen_size)"; res="${res:-1920x1080}"
     sw="${res%x*}"; sh="${res#*x}"
     # glava enforces a 50px minimum window height but honours larger heights.
@@ -100,7 +100,8 @@ _restart_glava() {
             -r "setgeometry 0 $gy $gw $gh" \
             > "$CFG_DIR/glava.log" 2>&1 &
     fi
-    echo $! > "$GLAVA_PID_FILE"
+    gpid=$!
+    echo "$gpid" > "$GLAVA_PID_FILE"
 
     sleep 0.5
     _apply_glava_theme "$theme"
@@ -115,8 +116,11 @@ _restart_glava() {
     #   - windowraise lifts it to the top of the X stacking order, which matters
     #     because override_redirect windows are not restacked by the WM
     # xwinwrap launches it as a NORMAL window, so we re-class it each start.
+    # Scope the search to the PID we just spawned so a stale GLava window from
+    # a previous toggle can never be grabbed by mistake.
     if command -v xdotool >/dev/null && command -v xprop >/dev/null; then
-        gid=$(xdotool search --class GLava 2>/dev/null | head -1)
+        gid=$(xdotool search --pid "$gpid" --class GLava 2>/dev/null | head -1)
+        [ -z "$gid" ] && gid=$(xdotool search --class GLava 2>/dev/null | head -1)
         if [ -n "$gid" ]; then
             xprop -id "$gid" -f _NET_WM_WINDOW_TYPE 32a \
                 -set _NET_WM_WINDOW_TYPE _NET_WM_WINDOW_TYPE_UTILITY
