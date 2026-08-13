@@ -84,13 +84,15 @@ _restart_glava() {
     # instead of the bottom. Dropping it lets glava honour the explicit
     # `setgeometry 0 <gy> ...` Y below, placing it along the bottom edge,
     # just above the dock bar. xwinwrap still provides click-through (-ni),
-    # stacking (-b) and ARGB transparency (-argb).
+    # on-top stacking (remove -b, raise below) and ARGB transparency (-argb).
     if command -v xwinwrap >/dev/null; then
-        # -ni = click-through (empty input shape, the ONLY reliable mechanism)
-        # -b  = below all normal windows — xwinwrap's real "stay behind" flag
-        # -ov = override_redirect, so the WM never touches stacking/focus
-        # -argb = ARGB visual for transparency
-        nohup xwinwrap -ov -ni -b -argb -g ${gw}x${gh}+0+${gy} -- \
+        # -ni  = click-through (empty input shape — the ONLY reliable way to
+        #        guarantee the mouse passes straight through to windows below)
+        # -ov  = override_redirect, so the WM never restacks it below apps
+        # -argb = ARGB visual so the background is truly transparent (compositor
+        #        blends the bars over whatever is underneath)
+        # NOTE: deliberately no -b (below) — we want this ON TOP of all windows.
+        nohup xwinwrap -ov -ni -argb -g ${gw}x${gh}+0+${gy} -- \
             glava -m "$mode" -r "setgeometry 0 $gy $gw $gh" \
             > "$CFG_DIR/glava.log" 2>&1 &
     else
@@ -103,19 +105,24 @@ _restart_glava() {
     sleep 0.5
     _apply_glava_theme "$theme"
 
-    # Make glava the DESKTOP layer (background), not a floating sticky window:
-    #   - click-through (never grabs the mouse)
-    #   - below all normal windows
-    #   - composited as clean ARGB -> no workspace-switch ghosting / tearing
-    #     ("half of another workspace's terminal" stuck in the glava strip).
+    # Make glava an ON-TOP overlay (above all normal windows), not a background:
+    #   - click-through (never grabs the mouse — empty input shape via -ni)
+    #   - _NET_WM_WINDOW_TYPE_UTILITY = floating overlay, no taskbar entry,
+    #     won't steal keyboard focus
+    #   - _NET_WM_STATE_ABOVE = composited above ALL windows (the requested
+    #     "in front of everything" behaviour)
+    #   - SKIP_TASKBAR/SKIP_PAGER/STICKY = no window-list entry, follows workspaces
+    #   - windowraise lifts it to the top of the X stacking order, which matters
+    #     because override_redirect windows are not restacked by the WM
     # xwinwrap launches it as a NORMAL window, so we re-class it each start.
     if command -v xdotool >/dev/null && command -v xprop >/dev/null; then
         gid=$(xdotool search --class GLava 2>/dev/null | head -1)
         if [ -n "$gid" ]; then
             xprop -id "$gid" -f _NET_WM_WINDOW_TYPE 32a \
-                -set _NET_WM_WINDOW_TYPE _NET_WM_WINDOW_TYPE_DESKTOP
+                -set _NET_WM_WINDOW_TYPE _NET_WM_WINDOW_TYPE_UTILITY
             xprop -id "$gid" -f _NET_WM_STATE 32a \
-                -set _NET_WM_STATE _NET_WM_STATE_BELOW,_NET_WM_STATE_SKIP_TASKBAR,_NET_WM_STATE_SKIP_PAGER
+                -set _NET_WM_STATE _NET_WM_STATE_ABOVE,_NET_WM_STATE_SKIP_TASKBAR,_NET_WM_STATE_SKIP_PAGER,_NET_WM_STATE_STICKY
+            xdotool windowraise "$gid" 2>/dev/null || true
         fi
     fi
 }
