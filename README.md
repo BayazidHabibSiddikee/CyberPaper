@@ -4,6 +4,12 @@ A PySide6-powered animated desktop overlay that replaces your wallpaper with a f
 
 ## Screenshots
 
+### SwordGraph — Animated Bubble Physics Layer
+![SwordGraph](screenshots/swordgraph-1.png)
+
+Each node in `~/.config/animated-wallpaper/graph.json` becomes a physical bubble with collision repulsion, elastic strings connecting neighbours, gentle drift, and boundary clamping. Bubbles stay inside the panel at all times and drag with the mouse.
+![SwordGraph 2](screenshots/swordgraph-2.png)
+
 ### Cyberdeck with Glava Audio Visualizer
 ![Cyberdeck](screenshots/1785282500.png)
 
@@ -310,6 +316,7 @@ Or restart anytime:
 | `spectrum_overlay.py` | Built-in audio spectrum (when glava disabled)      |
 | `left_panel.py`     | Matrix rain / pipes animations                       |
 | `pipes_layer.py`    | Animated pipes texture                               |
+| `swordgraph_layer.py` | **Animated graph-bubble physics** — replaces static graph PNG with live simulation  |
 | `graph-edit.sh`     | Rofi-based mission graph editor                      |
 | `graph-render.sh`   | Renders graph.json → graph.png via graphviz          |
 | `graph.default.json`| Default mission graph data                           |
@@ -346,6 +353,49 @@ The dock bar replaces i3bar and shows:
 - **Left:** Workspace buttons (click to switch, focused highlighted, urgent red)
 - **Center:** Username, time/date, CPU, RAM, disk %, network speed, current track
 - **Right:** WiFi SSID + IP, volume (mute-aware), battery % (amber ≤40%, red ≤20%), uptime
+
+### SwordGraph Tuning
+
+All parameters live in `swordgraph_layer.py` class constructor. Defaults work well for a typical single-monitor setup:
+
+```python
+# In swordgraph_layer.py (line ~64):
+def __init__(self, widget, *,
+             count=10,
+             min_r_pct=0.15, max_r_pct=0.30,   # bubble size as % of panel shortest side
+             interval_ms=50,                     # physics update interval (lower = smoother but more CPU)
+             repulsion=10.0,                     # how hard bubbles push apart on contact
+             drift=0.03,                         # ambient sinusoidal drift strength
+             damping=0.97,                       # velocity retention per frame (lower = more energy loss)
+             edge_margin=30,                     # px buffer from panel edges
+             max_alpha=80,                       # fill opacity (0-255)
+             ):
+```
+
+**Bigger bubbles:** raise `min_r_pct` / `max_r_pct` (e.g. `0.20` / `0.40`). Fewer nodes will fit — the code auto-caps visible nodes to avoid overlap chaos.
+
+**Smoother / more CPU:** lower `interval_ms` (22 ms ≈ 45 fps). Default is 50 ms (20 fps) for low-CPU idle.
+
+**More spread:** raise `repulsion` (default 10). Set very high (18+) for aggressive separation.
+
+**Darker/brighter strings:** edit the `QColor.fromHsl(...)` call near line 128:
+```python
+# Cyan strings (default):
+p.setPen(QColor.fromHsl(198, 85, 75, alpha))
+# Black strings:
+p.setPen(QColor(20, 20, 20, alpha))
+# White strings:
+p.setPen(QColor(240, 240, 240, alpha))
+```
+
+### Node Visibility Cap
+
+To prevent 100+ nodes from overlapping, `MAX_SHOWN` caps the visualised set to the top-degree nodes:
+```python
+MAX_SHOWN = max(6, min(len(self._node_data), 8))  # adjust as needed
+```
+
+Lower this number for larger, more spread-out bubbles. Higher for more nodes (smaller bubbles).
 
 ## Customization
 
