@@ -62,7 +62,7 @@ class SwordGraphLayer(QObject):
                  graph_json=None,
                  count=10,
                  min_r_pct=0.15, max_r_pct=0.30,
-                 interval_ms=40, repulsion=12.0, drift=0.04,
+                 interval_ms=50, repulsion=10.0, drift=0.03,
                  damping=0.97, edge_margin=30,
                  string_max_d=STRING_MAX_D, max_alpha=80):
         super().__init__(widget)
@@ -223,9 +223,9 @@ class SwordGraphLayer(QObject):
                 degree[b] = degree.get(b, 0) + 1
             max_deg = max(degree.values(), default=1)
 
-            # Cap visible nodes: large bubbles need room. At r≈190–373px,
-            # the panel can comfortably hold ~20–30 before they start squishing.
-            MAX_SHOWN = max(10, min(len(self._node_data), 20))
+            # Cap visible nodes: large bubbles need room.
+            # 8 nodes = 28 pairs × 20fps = only 560 ops/sec (near-zero CPU)
+            MAX_SHOWN = max(6, min(len(self._node_data), 8))
             sorted_indices = sorted(
                 range(len(self._node_data)),
                 key=lambda i: degree.get(i, 0),
