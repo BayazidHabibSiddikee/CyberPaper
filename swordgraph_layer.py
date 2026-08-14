@@ -62,9 +62,9 @@ class SwordGraphLayer(QObject):
                  graph_json=None,
                  count=10,
                  min_r_pct=0.15, max_r_pct=0.30,
-                 interval_ms=22, repulsion=20.0, drift=0.04,
-                 damping=0.91, edge_margin=140,
-                 string_max_d=STRING_MAX_D, max_alpha=72):
+                 interval_ms=18, repulsion=28.0, drift=0.12,
+                 damping=0.94, edge_margin=30,
+                 string_max_d=STRING_MAX_D, max_alpha=80):
         super().__init__(widget)
         self._widget           = widget
         self.max_alpha         = max_alpha
@@ -95,7 +95,7 @@ class SwordGraphLayer(QObject):
         self._min_sep     = 15.0
 
         # Pre-warm physics so bubbles start well-spread (not clumped)
-        self._warmup_ticks = 120           # ~2.6 s of pure-repulsion settling
+        self._warmup_ticks = 150           # ~2.7 s of pure-repulsion settling
         self._warmup_running = True
 
         # Compute radii from widget size (proportional, not fixed)
@@ -123,9 +123,9 @@ class SwordGraphLayer(QObject):
             for bj in bubs[i + 1:]:
                 d = math.hypot(bi.cx - bj.cx, bi.cy - bj.cy)
                 if d < self._string_max_d:
-                    alpha = int(self.max_alpha * 0.50 * (1.0 - d / self._string_max_d))
+                    alpha = int(self.max_alpha * 0.85 * (1.0 - d / self._string_max_d))
                     mid_hue = (bi.fill_hue + bj.fill_hue) // 2
-                    p.setPen(QColor.fromHsl(mid_hue, 55, 65, alpha))
+                    p.setPen(QColor.fromHsl(198, 85, 75, alpha))
                     p.setBrush(Qt.NoBrush)
                     p.drawLine(int(bi.cx), int(bi.cy), int(bj.cx), int(bj.cy))
 
