@@ -14,7 +14,7 @@ import json
 import random
 import time
 from PySide6.QtCore import QObject, QTimer, Qt
-from PySide6.QtGui import QPainter, QColor, QFont, QRadialGradient
+from PySide6.QtGui import QPainter, QColor, QFont, QLinearGradient, QPen
 
 # ── Palette (One Dark family) ────────────────────────────────────────────────
 HUE_DONE        = 145   # green
@@ -39,19 +39,20 @@ def _status_hue(status: str) -> int:
 # ── Internal bubble ──────────────────────────────────────────────────────────
 class _Bubble:
     __slots__ = ('nid', 'label', 'cx', 'cy', 'vx', 'vy', 'r', 'fill_hue',
-                 'mass', 'ax', 'ay', 'phase')
+                 'mass', 'ax', 'ay', 'phase', '_prev_v')
 
     def __init__(self, nid: str, label: str, x: float, y: float, r: float,
                  fill_hue: int):
         self.nid       = nid
         self.label     = label
         self.cx, self.cy = x, y
-        self.vx, self.vy = 0.0, 0.0          # zero initial velocity
+        self.vx, self.vy = random.uniform(-0.2, 0.2), random.uniform(-0.15, 0.15)
         self.r         = r
         self.fill_hue  = fill_hue
         self.mass      = r * r
         self.ax, self.ay = 0.0, 0.0
         self.phase     = random.uniform(0, 6.2832)
+        self._prev_v   = 0.0      # previous speed, for energy tracking
 
 
 # ── Public layer ─────────────────────────────────────────────────────────────
@@ -85,26 +86,31 @@ class SwordGraphLayer(QObject):
         self._bubbles      = []
 
         # Tuning constants
-        self._repulsion   = repulsion    # moderate push — less CPU than violent bouncing
-        self._drift       = drift        # gentle ambient drift
-        self._damping     = damping      # higher = settles faster = less frame-to-frame work
+        self._repulsion   = repulsion
+        self._drift       = drift
+        self._damping     = damping
         self._edge_margin = edge_margin
         self._spring_k    = 0.0001
         self._node_count  = 0
         self._string_k    = 0.0004
         self._min_sep     = 10.0
+        self._idle_thresh = 0.02   # px/frame — below this, skip render
 
         # Pre-warm physics so bubbles start well-spread (not clumped)
-        self._warmup_ticks = 150           # ~2.7 s of pure-repulsion settling
+        self._warmup_ticks = 80            # ~4 s at 50ms (lighter warmup)
         self._warmup_running = True
 
         # Compute radii from widget size (proportional, not fixed)
         self._base_r = max(int(min(self._w, self._h) * self._min_r_pct), 26)
         self._max_r  = max(int(min(self._w, self._h) * self._max_r_pct), 65)
 
+        # Pre-create fonts once — don't allocate per-frame
+        self._font_labels = QFont("Sans Mono", 9)
+        self._font_status = QFont("Sans Mono", 7)
+
         self._load_graph()
         self._init_bubbles(count)
-        self._warmup()                      # spread bubbles before showing them
+        self._warmup()
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -125,7 +131,7 @@ class SwordGraphLayer(QObject):
                 if d < self._string_max_d:
                     alpha = int(self.max_alpha * 0.85 * (1.0 - d / self._string_max_d))
                     mid_hue = (bi.fill_hue + bj.fill_hue) // 2
-                    p.setPen(QColor.fromHsl(198, 85, 75, alpha))
+                    p.setPen(QColor.fromHsl(mid_hue, 85, 70, alpha))
                     p.setBrush(Qt.NoBrush)
                     p.drawLine(int(bi.cx), int(bi.cy), int(bj.cx), int(bj.cy))
 
@@ -177,19 +183,14 @@ class SwordGraphLayer(QObject):
     # ── Graph loading ──────────────────────────────────────────────────────
 
     def _load_graph(self):
-        """Read graph.json → populate _node_data and _edges."""
         self._node_data.clear()
         self._edges.clear()
         try:
             with open(self._graph_json) as f:
                 d = json.load(f)
-            # Skip phantom 'source'/'target' nodes produced by swordgraph's
-            # tree scan (they have no real label/path and are used only as
-            # internal DFS anchors — not meant to be visualised).
             valid_ids = set()
             for n in d.get("nodes", []):
                 nid = n.get("id", "")
-                # A real node must have a meaningful label (not just 'source'/'target')
                 label = n.get("label", "").strip()
                 if label and nid not in ("source", "target") and len(label) > 1:
                     self._node_data.append((
@@ -206,8 +207,6 @@ class SwordGraphLayer(QObject):
         except Exception:
             pass
 
-    # ── Bubble initialisation + warmup ──────────────────────────────────────
-
     def _init_bubbles(self, count: int):
         """Place bubbles on a grid, then run warmup physics to spread them."""
         self._load_graph()
@@ -216,24 +215,21 @@ class SwordGraphLayer(QObject):
         margin = self._edge_margin
 
         if self._node_data:
-            # Degree-aware sizing: high-degree nodes get slightly bigger
             degree = {}
             for a, b in self._edges:
                 degree[a] = degree.get(a, 0) + 1
                 degree[b] = degree.get(b, 0) + 1
             max_deg = max(degree.values(), default=1)
 
-            # Cap visible nodes: large bubbles need room.
-            # 8 nodes = 28 pairs × 20fps = only 560 ops/sec (near-zero CPU)
-            MAX_SHOWN = max(6, min(len(self._node_data), 8))
+            # Cap visible nodes: large bubbles need room
+            MAX_SHOWN = max(6, min(len(self._node_data), 12))
             sorted_indices = sorted(
                 range(len(self._node_data)),
                 key=lambda i: degree.get(i, 0),
                 reverse=True
             )[:MAX_SHOWN]
-            node_set = set(sorted_indices)
 
-            n_visible = len(node_set)
+            n_visible = len(sorted_indices)
             cols = max(2, round(math.sqrt(n_visible * (w / h))))
             rows = max(2, math.ceil(n_visible / cols))
             cell_w = (w - 2 * margin) / cols
@@ -242,19 +238,16 @@ class SwordGraphLayer(QObject):
             for idx in sorted_indices:
                 nid, label, status, hue = self._node_data[idx]
                 deg   = degree.get(idx, 0) + 1
-                # Radius: scale with degree but clamp to [base_r, max_r]
-                r = self._base_r + (self._max_r - self._base_r) * (deg / max_deg)
-                r = max(self._base_r, min(self._max_r, r))
-                # Place on grid with small random jitter
-                col = idx % cols
-                row = idx // cols
-                cx = margin + r + col * cell_w + random.uniform(-cell_w * 0.15, cell_w * 0.15)
-                cy = margin + r + row * cell_h + random.uniform(-cell_h * 0.15, cell_h * 0.15)
+                r     = self._base_r + (self._max_r - self._base_r) * (deg / max_deg)
+                r     = max(self._base_r, min(self._max_r, r))
+                col   = idx % cols
+                row   = idx // cols
+                cx = margin + r + col * cell_w + random.uniform(-cell_w * 0.1, cell_w * 0.1)
+                cy = margin + r + row * cell_h + random.uniform(-cell_h * 0.1, cell_h * 0.1)
                 cx = max(r, min(w - r, cx))
                 cy = max(r, min(h - r, cy))
                 self._bubbles.append(_Bubble(nid, label, cx, cy, r, hue))
         else:
-            # Fallback: scatter
             for _ in range(count):
                 r  = random.uniform(self._base_r, self._max_r)
                 cx = random.uniform(r + margin, max(r + margin, w - r - margin))
@@ -263,9 +256,7 @@ class SwordGraphLayer(QObject):
                 self._bubbles.append(_Bubble(f"node_{_}", f"node{_}", cx, cy, r, hue))
 
     def _warmup(self):
-        """Run pure-repulsion physics steps off-screen so bubbles spread out
-        before any frame is drawn. No strings, no drift — just collision
-        resolution until no overlaps remain."""
+        """Run pure-repulsion physics steps off-screen so bubbles spread out."""
         w, h = self._w, self._h
         bubs = self._bubbles
         n    = len(bubs)
@@ -277,7 +268,6 @@ class SwordGraphLayer(QObject):
                 b.ax = 0.0
                 b.ay = 0.0
 
-            # Repulsion only (no strings during warmup)
             for i in range(n):
                 bi = bubs[i]
                 for j in range(i + 1, n):
@@ -296,7 +286,6 @@ class SwordGraphLayer(QObject):
                         bi.vx += fx * ii; bi.vy += fy * ii
                         bj.vx -= fx * jj; bj.vy -= fy * jj
 
-            # Wall repulsion
             m = self._edge_margin
             for b in bubs:
                 if b.cx < b.r + m:   b.ax += (m - (b.cx - b.r)) * 0.05
@@ -304,15 +293,13 @@ class SwordGraphLayer(QObject):
                 if b.cy < b.r + m:   b.ay += (m - (b.cy - b.r)) * 0.05
                 elif b.cy > h - b.r - m: b.ay -= (b.cy - (h - b.r - m)) * 0.05
 
-            # Integrate
             for b in bubs:
-                b.vx *= 0.90; b.vy *= 0.90          # heavy damping during warmup
+                b.vx *= 0.90; b.vy *= 0.90
                 b.vx += b.ax; b.vy += b.ay
                 b.cx += b.vx; b.cy += b.vy
                 b.cx = max(b.r, min(w - b.r, b.cx))
                 b.cy = max(b.r, min(h - b.r, b.cy))
 
-            # Hard separation pass (guarantee no overlaps)
             for i in range(n):
                 bi = bubs[i]
                 for j in range(i + 1, n):
@@ -329,7 +316,6 @@ class SwordGraphLayer(QObject):
                         bi.cy -= ny * push * ii
                         bj.cx += nx * push * jj
                         bj.cy += ny * push * jj
-                        # Clamp
                         bi.cx = max(bi.r, min(w - bi.r, bi.cx))
                         bi.cy = max(bi.r, min(h - bi.r, bi.cy))
                         bj.cx = max(bj.r, min(w - bj.r, bj.cx))
@@ -337,7 +323,7 @@ class SwordGraphLayer(QObject):
 
         self._warmup_running = False
 
-    # ── Live physics tick ────────────────────────────────────────────────────
+    # ── Physics tick ────────────────────────────────────────────────────────
 
     def _tick(self):
         w, h = self._widget.width(), self._widget.height()
@@ -375,7 +361,7 @@ class SwordGraphLayer(QObject):
                     bi.vx += fx * ii; bi.vy += fy * ii
                     bj.vx -= fx * jj; bj.vy -= fy * jj
 
-        # String tension (only after warmup; during warmup only repulsion runs)
+        # String tension
         if not self._warmup_running:
             for ei, ej in self._edges:
                 if ei >= n or ej >= n:
@@ -385,7 +371,7 @@ class SwordGraphLayer(QObject):
                 dy = bj.cy - bi.cy
                 d  = math.hypot(dx, dy)
                 if d < self._string_max_d and d > 1.0:
-                    rest_length = (bi.r + bj.r) * 3.0
+                    rest_length = (bi.r + bj.r) * 2.5
                     stretch = max(0.0, d - rest_length)
                     spring_force = stretch * self._string_k
                     fx = dx / d * spring_force
@@ -418,21 +404,24 @@ class SwordGraphLayer(QObject):
             b.ay += math.cos(ft * 0.5 + b.phase * 1.3) * self._drift
 
         # Integrate
+        total_speed = 0.0
         for b in bubs:
             if b is self._drag:
                 continue
             b.vx = b.vx * self._damping + b.ax
             b.vy = b.vy * self._damping + b.ay
             speed = math.hypot(b.vx, b.vy)
-            if speed > 2.2:
-                b.vx = b.vx / speed * 2.2
-                b.vy = b.vy / speed * 2.2
+            if speed > 2.5:
+                b.vx = b.vx / speed * 2.5
+                b.vy = b.vy / speed * 2.5
             b.cx += b.vx
             b.cy += b.vy
             b.cx = max(b.r, min(w - b.r, b.cx))
             b.cy = max(b.r, min(h - b.r, b.cy))
+            total_speed += speed
+            b._prev_v = speed
 
-        # Post-integration hard separation (prevents any accidental overlap)
+        # Post-integration hard separation
         for i in range(n):
             bi = bubs[i]
             for j in range(i + 1, n):
@@ -453,7 +442,6 @@ class SwordGraphLayer(QObject):
                     bi.cy = max(bi.r, min(h - bi.r, bi.cy))
                     bj.cx = max(bj.r, min(w - bj.r, bj.cx))
                     bj.cy = max(bj.r, min(h - bj.r, bj.cy))
-                    # Dampen relative velocity along collision normal
                     rel_vx = bi.vx - bj.vx
                     rel_vy = bi.vy - bj.vy
                     dot = rel_vx * nx + rel_vy * ny
@@ -463,7 +451,9 @@ class SwordGraphLayer(QObject):
                         bj.vx += nx * dot * 0.25
                         bj.vy += ny * dot * 0.25
 
-        self._widget.update()
+        # Only repaint if anything moved significantly (saves CPU at idle)
+        if total_speed > self._idle_thresh * n:
+            self._widget.update()
 
     # ── Drawing ─────────────────────────────────────────────────────────────
 
@@ -471,54 +461,66 @@ class SwordGraphLayer(QObject):
         r   = int(b.r)
         x   = int(b.cx)
         y   = int(b.cy)
-        hue = b.fill_hue
         ma  = self.max_alpha
 
-        # Outer glow halo
-        glow_r = int(r * 1.4)
-        halo = QRadialGradient(x, y, glow_r)
-        halo.setColorAt(0.0,  QColor.fromHsl(hue, 60, 60, int(ma * 0.12)))
-        halo.setColorAt(0.6,  QColor.fromHsl(hue, 50, 50, int(ma * 0.04)))
-        halo.setColorAt(1.0,  QColor.fromHsl(hue, 40, 40, 0))
-        p.setBrush(halo); p.setPen(Qt.NoPen)
+        # ── Interactive energy color ────────────────────────────────────
+        # Speed → saturation/brightness boost. Stationary = calm base hue.
+        # Moving fast = bright neon pop. This makes colors feel alive.
+        speed = math.hypot(b.vx, b.vy)
+        energy_factor = min(1.0, speed * 0.4)  # 0..1 based on speed
+
+        base_hue = b.fill_hue
+        lightness_boost = int(energy_factor * 20)   # up to +20 lightness
+        sat_boost     = int(energy_factor * 25)    # up to +25 saturation
+        glow_intense  = energy_factor               # used for emissive glow
+
+        # ── Outer glow halo (pulse with speed) ──────────────────────────
+        glow_r = int(r * 1.5)
+        glow_a = int(ma * (0.10 + glow_intense * 0.15))  # brighter when moving
+        p.setPen(Qt.NoPen)
+        grad_color = QColor.fromHsl(base_hue, 60, 60, glow_a)
+        p.setBrush(grad_color)
         p.drawEllipse(x - glow_r, y - glow_r, glow_r * 2, glow_r * 2)
 
-        # Radial gradient fill
-        grad = QRadialGradient(x - r // 4, y - r // 3, r * 1.2)
-        grad.setColorAt(0.0,  QColor.fromHsl(hue, 55, 65, int(ma * 0.85)))
-        grad.setColorAt(0.45, QColor.fromHsl(hue, 50, 55, int(ma * 0.65)))
-        grad.setColorAt(0.80, QColor.fromHsl(hue, 45, 42, int(ma * 0.35)))
-        grad.setColorAt(1.0,  QColor.fromHsl(hue, 40, 35, 0))
-        p.setBrush(grad); p.setPen(Qt.NoPen)
+        # ── Radial gradient fill ────────────────────────────────────────
+        grad = QLinearGradient(x - r, y - r, x + r, y + r * 2)
+        l1 = min(85, 55 + lightness_boost)
+        l2 = min(75, 45 + int(lightness_boost * 0.6))
+        l3 = min(55, 35 + int(lightness_boost * 0.3))
+        s1 = min(90, 55 + sat_boost)
+        grad.setColorAt(0.0,  QColor.fromHsl(base_hue, s1, l1, int(ma * 0.90)))
+        grad.setColorAt(0.5,  QColor.fromHsl(base_hue, s1 - 10, l2, int(ma * 0.70)))
+        grad.setColorAt(1.0,  QColor.fromHsl(base_hue, s1 - 20, l3, int(ma * 0.10)))
+        p.setBrush(grad)
+        p.setPen(Qt.NoPen)
         p.drawEllipse(x - r, y - r, r * 2, r * 2)
 
-        # Specular highlight
+        # ── Specular highlight ──────────────────────────────────────────
         hl_r = max(3, r // 3)
         hx, hy = x - r // 3, y - r // 2 - hl_r
-        hl = QRadialGradient(hx, hy, hl_r * 1.6)
-        hl.setColorAt(0, QColor.fromHsl(hue, 10, 92, int(ma * 0.75)))
-        hl.setColorAt(1, QColor.fromHsl(hue, 10, 92, 0))
-        p.setBrush(hl); p.setPen(Qt.NoPen)
+        hl_a = int(ma * (0.60 + glow_intense * 0.25))
+        hl_color = QColor.fromHsl(base_hue, 10, 92, hl_a)
+        p.setBrush(hl_color)
+        p.setPen(Qt.NoPen)
         p.drawEllipse(hx - hl_r, hy - hl_r, hl_r * 2, hl_r * 2)
 
-        # Rim
-        rim_a = int(ma * 0.55)
-        p.setPen(QColor.fromHsl(hue, 55, 68, rim_a)); p.setBrush(Qt.NoBrush)
+        # ── Rim — glowing when moving ──────────────────────────────────
+        rim_a  = int(ma * (0.45 + glow_intense * 0.35))
+        rim_l  = min(80, 68 + lightness_boost)
+        p.setPen(QColor.fromHsl(base_hue, 60, rim_l, rim_a))
+        p.setBrush(Qt.NoBrush)
         p.drawEllipse(x - r, y - r, r * 2, r * 2)
 
-        # Label — font scales with bubble radius, text area wide enough for full label
-        font_size = max(8, min(14, int(r * 0.22)))
-        p.setPen(QColor.fromHsl(hue, 15, 93, 245))
-        p.setFont(QFont("JetBrains Mono", font_size))
+        # ── Label — cached font, no per-frame allocation ───────────────
+        p.setPen(QColor.fromHsl(base_hue, 15, 93, 245))
+        p.setFont(self._font_labels)
         metrics = p.fontMetrics()
-        # Cell width = bubble diameter * 0.85 → leaves room for glow, never elides
-        cell_w = int(r * 1.6)
-        cell_h = int(metrics.height() * 2.0)   # two lines of headroom
-        text_y = y - cell_h // 2 + 1
+        cell_w  = int(r * 1.6)
+        cell_h  = int(metrics.height() * 2.0)
+        text_y  = y - cell_h // 2 + 1
 
         label = b.label
         if metrics.horizontalAdvance(label) > cell_w:
-            # Split at last space before midpoint
             mid = len(label) // 2
             split = label.rfind(' ', 0, mid + 4)
             if split <= 0:
@@ -534,10 +536,11 @@ class SwordGraphLayer(QObject):
             p.drawText(x - r, text_y, r * 2, cell_h,
                        Qt.AlignHCenter | Qt.AlignVCenter, label)
 
-        # Status dot beneath label
+        # ── Status dot beneath label ───────────────────────────────────
         dot_r = max(2, r // 8)
         dot_y = text_y + cell_h + 1
         if dot_y < y + r:
-            p.setBrush(QColor.fromHsl(hue, 75, 68, int(ma * 0.95)))
+            dot_alpha = int(ma * (0.80 + glow_intense * 0.15))
+            p.setBrush(QColor.fromHsl(base_hue, 75, 68, dot_alpha))
             p.setPen(Qt.NoPen)
             p.drawEllipse(x - dot_r, dot_y - dot_r, dot_r * 2, dot_r * 2)
