@@ -62,8 +62,8 @@ class SwordGraphLayer(QObject):
                  graph_json=None,
                  count=10,
                  min_r_pct=0.15, max_r_pct=0.30,
-                 interval_ms=18, repulsion=28.0, drift=0.12,
-                 damping=0.94, edge_margin=30,
+                 interval_ms=40, repulsion=12.0, drift=0.04,
+                 damping=0.97, edge_margin=30,
                  string_max_d=STRING_MAX_D, max_alpha=80):
         super().__init__(widget)
         self._widget           = widget
@@ -85,14 +85,14 @@ class SwordGraphLayer(QObject):
         self._bubbles      = []
 
         # Tuning constants
-        self._repulsion   = repulsion    # 3× stronger push between bubbles
-        self._drift       = drift
-        self._damping     = damping      # lower = keeps momentum, less sticky
+        self._repulsion   = repulsion    # moderate push — less CPU than violent bouncing
+        self._drift       = drift        # gentle ambient drift
+        self._damping     = damping      # higher = settles faster = less frame-to-frame work
         self._edge_margin = edge_margin
-        self._spring_k    = 0.00008
+        self._spring_k    = 0.0001
         self._node_count  = 0
-        self._string_k    = 0.0003       # very weak string pull — nodes stay far apart
-        self._min_sep     = 15.0
+        self._string_k    = 0.0004
+        self._min_sep     = 10.0
 
         # Pre-warm physics so bubbles start well-spread (not clumped)
         self._warmup_ticks = 150           # ~2.7 s of pure-repulsion settling
@@ -225,7 +225,7 @@ class SwordGraphLayer(QObject):
 
             # Cap visible nodes: large bubbles need room. At r≈190–373px,
             # the panel can comfortably hold ~20–30 before they start squishing.
-            MAX_SHOWN = max(15, min(len(self._node_data), 40))
+            MAX_SHOWN = max(10, min(len(self._node_data), 20))
             sorted_indices = sorted(
                 range(len(self._node_data)),
                 key=lambda i: degree.get(i, 0),
