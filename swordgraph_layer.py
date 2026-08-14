@@ -61,9 +61,9 @@ class SwordGraphLayer(QObject):
     def __init__(self, widget, *,
                  graph_json=None,
                  count=10,
-                 min_r_pct=0.06, max_r_pct=0.18,
-                 interval_ms=22, repulsion=6.0, drift=0.04,
-                 damping=0.93, edge_margin=50,
+                 min_r_pct=0.15, max_r_pct=0.30,
+                 interval_ms=22, repulsion=20.0, drift=0.04,
+                 damping=0.91, edge_margin=140,
                  string_max_d=STRING_MAX_D, max_alpha=72):
         super().__init__(widget)
         self._widget           = widget
@@ -85,17 +85,17 @@ class SwordGraphLayer(QObject):
         self._bubbles      = []
 
         # Tuning constants
-        self._repulsion   = repulsion    # strong → pushes bubbles well apart
+        self._repulsion   = repulsion    # 3× stronger push between bubbles
         self._drift       = drift
-        self._damping     = damping      # lower → keeps momentum, less sticky
+        self._damping     = damping      # lower = keeps momentum, less sticky
         self._edge_margin = edge_margin
-        self._spring_k    = 0.00012
+        self._spring_k    = 0.00008
         self._node_count  = 0
-        self._string_k    = 0.0008
-        self._min_sep     = 8.0
+        self._string_k    = 0.0003       # very weak string pull — nodes stay far apart
+        self._min_sep     = 15.0
 
         # Pre-warm physics so bubbles start well-spread (not clumped)
-        self._warmup_ticks = 80            # ~1.8 s of pure-repulsion settling
+        self._warmup_ticks = 120           # ~2.6 s of pure-repulsion settling
         self._warmup_running = True
 
         # Compute radii from widget size (proportional, not fixed)
@@ -223,16 +223,24 @@ class SwordGraphLayer(QObject):
                 degree[b] = degree.get(b, 0) + 1
             max_deg = max(degree.values(), default=1)
 
-            # Grid layout: compute cols × rows to fill the area
-            n_nodes = len(self._node_data)
-            aspect  = w / h
-            cols = max(1, round(math.sqrt(n_nodes * aspect)))
-            rows = max(1, math.ceil(n_nodes / cols))
+            # Cap visible nodes: large bubbles need room. At r≈190–373px,
+            # the panel can comfortably hold ~20–30 before they start squishing.
+            MAX_SHOWN = max(15, min(len(self._node_data), 40))
+            sorted_indices = sorted(
+                range(len(self._node_data)),
+                key=lambda i: degree.get(i, 0),
+                reverse=True
+            )[:MAX_SHOWN]
+            node_set = set(sorted_indices)
+
+            n_visible = len(node_set)
+            cols = max(2, round(math.sqrt(n_visible * (w / h))))
+            rows = max(2, math.ceil(n_visible / cols))
             cell_w = (w - 2 * margin) / cols
             cell_h = (h - 2 * margin) / rows
-            cell_size = min(cell_w, cell_h)
 
-            for idx, (nid, label, status, hue) in enumerate(self._node_data):
+            for idx in sorted_indices:
+                nid, label, status, hue = self._node_data[idx]
                 deg   = degree.get(idx, 0) + 1
                 # Radius: scale with degree but clamp to [base_r, max_r]
                 r = self._base_r + (self._max_r - self._base_r) * (deg / max_deg)
