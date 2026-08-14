@@ -1,0 +1,728 @@
+#!/usr/bin/env python3
+"""swordshare — password-protected LAN file server for SwordFM.
+
+Usage: swordshare <path> [--port N] [--no-upload]
+
+Prints one JSON line to stdout once listening:
+
+    {"url":"http://192.168.1.5:8731/","ip":"...","port":8731,
+     "password":"492 810","qr":"/tmp/swordshare-xxxx.png"}
+
+then serves until killed. SwordFM parses that line, shows the QR image and
+password, and terminates the process when you press Stop.
+
+Why HTTP and not FTP: every current phone browser dropped ftp:// support, so a
+QR code containing an FTP link simply fails to open. HTTP opens in the same
+browser that scanned the code.
+
+Scope: this is for handing files to your own phone on your own network. It binds
+to the LAN address only (never 0.0.0.0), requires a password, and confines every
+path to the shared directory. It is not hardened against a hostile attacker who
+is already on your network.
+"""
+
+import argparse
+import hashlib
+import hmac
+import html
+import http.cookies
+import json
+import mimetypes
+import os
+import re
+import secrets
+import shutil
+import signal
+import socket
+import sys
+import threading
+import time
+import urllib.parse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+SESSION_HOURS = 12
+MAX_UPLOAD = 8 * 1024 * 1024 * 1024   # 8 GB, i.e. "a phone video will fit"
+
+
+def die(msg):
+    sys.stderr.write(msg + "\n")
+    sys.exit(1)
+
+
+_out_lock = threading.Lock()
+
+
+def event(kind, **fields):
+    """Send one JSON line to SwordFM.
+
+    stdout is the control channel in both directions: events go out, commands
+    (`allow`, `deny`, `release`) come back on stdin.
+    """
+    fields["event"] = kind
+    with _out_lock:
+        sys.stdout.write(json.dumps(fields) + "\n")
+        sys.stdout.flush()
+
+
+def lan_ip():
+    """The address other devices on this network can reach.
+
+    Connecting a UDP socket assigns a local address without sending a packet.
+    Resolving the hostname instead usually just yields 127.0.0.1.
+    """
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("10.255.255.255", 1))
+        return s.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        s.close()
+
+
+def human(n):
+    if n < 1024:
+        return "%d B" % n
+    for unit in ("KB", "MB", "GB"):
+        n /= 1024.0
+        if n < 1024:
+            return "%.1f %s" % (n, unit)
+    return "%.1f TB" % (n / 1024.0)
+
+
+# ---------------------------------------------------------------- pages
+
+CSS = """
+:root{--bg:#282c34;--bg2:#21252b;--dim:#3e4451;--fg:#abb2bf;--fgd:#5c6370;
+--cyan:#61afef;--green:#98c379;--amber:#e5c07b;--red:#e06c75}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);
+font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+header{background:var(--bg2);padding:14px 18px;position:sticky;top:0;z-index:2;
+border-bottom:1px solid var(--dim)}
+header h1{font-size:15px;margin:0;font-weight:600;color:var(--cyan);
+overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;
+text-align:left}
+main{padding:12px 14px 60px}
+a{color:var(--fg);text-decoration:none}
+ul{list-style:none;margin:0;padding:0}
+li a{display:flex;align-items:center;gap:12px;padding:14px 10px;
+border-bottom:1px solid var(--dim)}
+li a:active{background:var(--dim)}
+.ic{font-size:19px;width:26px;text-align:center;flex:none}
+.nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sz{color:var(--fgd);font-size:13px;flex:none}
+form.up{padding:14px;margin-bottom:16px;background:var(--bg2);
+border:1px dashed var(--dim);border-radius:10px}
+form.login{max-width:340px;margin:14vh auto;padding:26px;background:var(--bg2);
+border:1px solid var(--dim);border-radius:12px;text-align:center}
+form.login h2{margin:0 0 6px;color:var(--cyan);font-size:19px}
+form.login p{margin:0 0 18px;color:var(--fgd);font-size:14px}
+input[type=password],input[type=file]{width:100%;padding:13px;margin-bottom:12px;
+background:var(--bg);border:1px solid var(--dim);border-radius:8px;
+color:var(--fg);font-size:17px}
+input[type=password]{text-align:center;letter-spacing:4px}
+button{width:100%;padding:13px;background:var(--cyan);color:var(--bg2);
+border:0;border-radius:8px;font-size:16px;font-weight:600}
+.err{color:var(--red);font-size:14px;margin-bottom:12px}
+.ok{color:var(--green);font-size:14px;margin-bottom:12px;text-align:center}
+.empty{color:var(--fgd);text-align:center;padding:44px}
+"""
+
+
+def shell(title, body):
+    return ("<!DOCTYPE html><html><head><meta charset=utf-8>"
+            "<meta name=viewport content='width=device-width,initial-scale=1'>"
+            "<title>%s</title><style>%s</style></head><body>%s</body></html>"
+            % (html.escape(title), CSS, body))
+
+
+TAKEN_BODY = ("<div class=empty>Another device is already connected.<br><br>"
+              "Press <b>Disconnect</b> on the computer to pair this one "
+              "instead.</div>")
+
+
+def waiting_page():
+    # The phone cannot be handed a session until the desktop approves, so it
+    # polls; /__wait issues the cookie the moment the answer is yes.
+    return shell("Waiting",
+                 "<form class=login><h2>Waiting for approval</h2>"
+                 "<p>Approve this device on the computer.</p></form>"
+                 "<script>setInterval(function(){fetch('/__wait')"
+                 ".then(function(r){return r.text()})"
+                 ".then(function(t){if(t=='ok')location='/';"
+                 "else if(t=='no')location='/'})},1500)</script>")
+
+
+def login_page(error=""):
+    return shell("SwordFM Share",
+                 "<form class=login method=post action='/__login'>"
+                 "<h2>SwordFM Share</h2>"
+                 "<p>Enter the code shown on the computer</p>%s"
+                 "<input type=password name=p autofocus autocomplete=off "
+                 "placeholder='code'>"
+                 "<button type=submit>Unlock</button></form>"
+                 % ("<div class=err>%s</div>" % html.escape(error) if error else ""))
+
+
+def icon_for(name, isdir):
+    if isdir:
+        return "&#128193;"
+    ext = os.path.splitext(name)[1].lower()
+    if ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".heic"):
+        return "&#128247;"
+    if ext in (".mp4", ".mkv", ".mov", ".avi", ".webm"):
+        return "&#127916;"
+    if ext in (".mp3", ".flac", ".wav", ".ogg", ".m4a", ".opus"):
+        return "&#127925;"
+    if ext == ".pdf":
+        return "&#128209;"
+    if ext in (".zip", ".tar", ".gz", ".xz", ".7z", ".rar", ".zst", ".bz2"):
+        return "&#128230;"
+    return "&#128196;"
+
+
+def listing_page(rel, entries, allow_upload, notice=""):
+    rows = []
+    if rel:
+        parent = os.path.dirname(rel.rstrip("/"))
+        rows.append("<li><a href='/%s/'><span class=ic>&#8617;</span>"
+                    "<span class=nm>..</span></a></li>"
+                    % urllib.parse.quote(parent))
+    for name, isdir, size in entries:
+        href = "/" + urllib.parse.quote(os.path.join(rel, name).lstrip("/"))
+        if isdir:
+            href += "/"
+        rows.append("<li><a href='%s'><span class=ic>%s</span>"
+                    "<span class=nm>%s</span><span class=sz>%s</span></a></li>"
+                    % (href, icon_for(name, isdir), html.escape(name),
+                       "" if isdir else human(size)))
+
+    upload = ""
+    if allow_upload:
+        upload = ("<form class=up method=post enctype='multipart/form-data' "
+                  "action='/__upload?d=%s'>"
+                  "<input type=file name=f multiple>"
+                  "<button type=submit>Upload to this folder</button></form>"
+                  % urllib.parse.quote(rel))
+
+    body = ("<ul>%s</ul>" % "".join(rows)) if rows \
+        else "<div class=empty>Empty folder</div>"
+    crumb = "/" + rel if rel else "/"
+    return shell(crumb,
+                 "<header><h1>%s</h1></header><main>%s%s%s</main>"
+                 % (html.escape(crumb),
+                    "<div class=ok>%s</div>" % html.escape(notice) if notice else "",
+                    upload, body))
+
+
+# ---------------------------------------------------------------- state
+
+class Share:
+    def __init__(self, root, password, allow_upload):
+        self.root = os.path.realpath(root)
+        self.isdir = os.path.isdir(self.root)
+        # Sharing a single file still needs a directory to resolve against;
+        # `single` then restricts everything else in it to 404.
+        self.base = self.root if self.isdir else os.path.dirname(self.root)
+        self.single = None if self.isdir else os.path.basename(self.root)
+        self.password = password
+        self.allow_upload = allow_upload and self.isdir
+        self.key = secrets.token_bytes(32)
+
+        # Exactly one device may hold the share. The correct password only
+        # earns a *claim*; the desktop still has to approve the address. Without
+        # this, anyone on the network who saw the QR code over your shoulder is
+        # as authorised as your own phone, and you would never know they were
+        # there.
+        self.lock = threading.Lock()
+        self.device = None          # approved client address
+        self.pending = None         # address awaiting a desktop decision
+
+    def claim(self, addr):
+        """Ask to become the one approved device.
+
+        Returns "ok", "wait" (a decision is pending) or "taken".
+        """
+        with self.lock:
+            if self.device == addr:
+                return "ok"
+            if self.device is not None:
+                return "taken"
+            if self.pending is None:
+                self.pending = addr
+                event("claim", ip=addr)
+                return "wait"
+            return "wait" if self.pending == addr else "taken"
+
+    def decide(self, allow):
+        with self.lock:
+            if allow:
+                self.device = self.pending
+            self.pending = None
+            return self.device
+
+    def release(self):
+        """Forget the approved device so another can pair."""
+        with self.lock:
+            self.device = None
+            self.pending = None
+            self.key = secrets.token_bytes(32)   # invalidate its session too
+
+    def token(self):
+        exp = str(int(time.time()) + SESSION_HOURS * 3600)
+        return exp + "." + self._sig(exp)
+
+    def _sig(self, exp):
+        return hmac.new(self.key, exp.encode(), hashlib.sha256).hexdigest()[:32]
+
+    def valid(self, tok):
+        if not tok or "." not in tok:
+            return False
+        exp, sig = tok.rsplit(".", 1)
+        if not hmac.compare_digest(sig, self._sig(exp)):
+            return False
+        try:
+            return int(exp) > time.time()
+        except ValueError:
+            return False
+
+    def resolve(self, urlpath):
+        """Map a URL path onto a real one, or None if it escapes the share.
+
+        realpath() runs before the prefix check so that neither ../ nor a
+        symlink pointing outside the shared folder can reach the rest of disk.
+        """
+        rel = urllib.parse.unquote(urlpath).lstrip("/")
+        if "\x00" in rel:
+            return None
+        full = os.path.realpath(os.path.join(self.base, rel))
+        if full != self.base and not full.startswith(self.base + os.sep):
+            return None
+        if self.single is not None and full not in (self.base, self.root):
+            return None
+        return full
+
+
+# ---------------------------------------------------------------- upload
+
+class BodyReader:
+    """Buffered view over the request body.
+
+    Line reads and bulk reads have to share one buffer. Mixing
+    rfile.readline() with rfile.read() loses whatever a bulk read already
+    pulled past a part boundary, which silently drops every file after the
+    first in a multi-file upload.
+    """
+
+    def __init__(self, rfile, total):
+        self.rfile = rfile
+        self.left = total          # bytes not yet pulled off the socket
+        self.buf = b""
+
+    def _fill(self, n):
+        while len(self.buf) < n and self.left > 0:
+            chunk = self.rfile.read(min(65536, self.left, n - len(self.buf)))
+            if not chunk:
+                self.left = 0
+                break
+            self.left -= len(chunk)
+            self.buf += chunk
+
+    def readline(self):
+        while b"\n" not in self.buf and self.left > 0:
+            self._fill(len(self.buf) + 65536)
+        idx = self.buf.find(b"\n")
+        if idx < 0:
+            line, self.buf = self.buf, b""
+            return line
+        line, self.buf = self.buf[:idx + 1], self.buf[idx + 1:]
+        return line
+
+    def chunk(self, n):
+        self._fill(n)
+        out, self.buf = self.buf[:n], self.buf[n:]
+        return out
+
+    def empty(self):
+        return not self.buf and self.left <= 0
+
+
+def parse_multipart(rfile, boundary, total, dest, limit=MAX_UPLOAD):
+    """Stream a multipart body straight to disk, returning saved filenames.
+
+    Deliberately hand-rolled: `cgi` was removed in Python 3.13, and the stdlib
+    alternatives buffer the whole body in memory — which a phone uploading a
+    video would not survive.
+    """
+    if total > limit:
+        raise ValueError("That upload is too large.")
+    delim = b"--" + boundary
+    end = b"\r\n" + delim
+    body = BodyReader(rfile, total)
+    saved = []
+
+    # Skip to the first boundary.
+    while not body.empty():
+        line = body.readline()
+        if not line or line.rstrip(b"\r\n") == delim:
+            break
+
+    while not body.empty():
+        name = None
+        while not body.empty():                     # part headers
+            line = body.readline()
+            if not line or line in (b"\r\n", b"\n"):
+                break
+            m = re.search(rb'filename\*?="([^"]*)"', line)
+            if m:
+                name = m.group(1).decode("utf-8", "replace")
+
+        sink = None
+        out = None
+        if name is not None:
+            # Basename only: a browser — or a crafted request — may send a path.
+            name = os.path.basename(name.replace("\\", "/")).strip()
+            if not name or name in (".", ".."):
+                name = "upload"
+            out = unique_path(dest, name)
+            sink = open(out, "wb")
+
+        try:
+            buf = b""
+            while True:
+                chunk = body.chunk(65536)
+                if not chunk:
+                    if sink:
+                        sink.write(buf)
+                    buf = b""
+                    break
+                buf += chunk
+                idx = buf.find(end)
+                if idx >= 0:
+                    if sink:
+                        sink.write(buf[:idx])
+                    # Push the tail back: it holds the next part's headers.
+                    # The CRLF terminating the boundary line goes with it, and
+                    # must be dropped — otherwise the next header read sees a
+                    # blank line first and treats that part as unnamed.
+                    tail = buf[idx + len(end):] + body.buf
+                    if tail.startswith(b"\r\n"):
+                        tail = tail[2:]
+                    body.buf = tail
+                    buf = b""
+                    break
+                # Hold back enough that a boundary split across two chunks
+                # is still matched.
+                if len(buf) > len(end):
+                    if sink:
+                        sink.write(buf[:-len(end)])
+                    buf = buf[-len(end):]
+        finally:
+            if sink:
+                sink.close()
+
+        if out:
+            saved.append(os.path.basename(out))
+        if body.buf.startswith(b"--"):               # closing boundary
+            break
+    return saved
+
+
+def unique_path(folder, name):
+    out = os.path.join(folder, name)
+    if not os.path.exists(out):
+        return out
+    stem, ext = os.path.splitext(name)
+    for i in range(2, 10000):
+        out = os.path.join(folder, "%s (%d)%s" % (stem, i, ext))
+        if not os.path.exists(out):
+            return out
+    return os.path.join(folder, name + ".dup")
+
+
+# ---------------------------------------------------------------- handler
+
+class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    server_version = "SwordFM"
+    sys_version = ""
+
+    def log_message(self, fmt, *a):
+        sys.stderr.write("%s %s\n" % (self.address_string(), fmt % a))
+
+    # -- helpers
+
+    @property
+    def share(self):
+        return self.server.share
+
+    def authed(self):
+        # The address is checked alongside the cookie: a stolen session is
+        # useless from a device the desktop never approved.
+        if self.share.device != self.client_address[0]:
+            return False
+        raw = self.headers.get("Cookie", "")
+        try:
+            jar = http.cookies.SimpleCookie(raw)
+        except http.cookies.CookieError:
+            return False
+        c = jar.get("sfm")
+        return bool(c) and self.share.valid(c.value)
+
+    def send_html(self, body, code=200, cookie=None):
+        data = body.encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        if cookie:
+            self.send_header("Set-Cookie", cookie)
+        self.end_headers()
+        self.wfile.write(data)
+
+    def redirect(self, to):
+        self.send_response(303)
+        self.send_header("Location", to)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    # -- verbs
+
+    def do_GET(self):
+        path, _, query = self.path.partition("?")
+        if path == "/__wait":
+            self.handle_wait()
+            return
+        if not self.authed():
+            self.send_html(login_page(), 401)
+            return
+        full = self.share.resolve(path)
+        if full is None or not os.path.exists(full):
+            self.send_html(shell("Not found",
+                                 "<div class=empty>Not found</div>"), 404)
+            return
+        if os.path.isdir(full):
+            self.send_listing(full, path,
+                              urllib.parse.parse_qs(query).get("ok", [""])[0])
+        else:
+            self.send_file(full)
+
+    def do_POST(self):
+        path, _, query = self.path.partition("?")
+        if path == "/__login":
+            self.handle_login()
+            return
+        if not self.authed():
+            self.send_html(login_page(), 401)
+            return
+        if path == "/__upload":
+            self.handle_upload(urllib.parse.parse_qs(query).get("d", [""])[0])
+            return
+        self.send_html(shell("Not found", "<div class=empty>Not found</div>"), 404)
+
+    def do_HEAD(self):
+        self.do_GET()
+
+    # -- actions
+
+    def handle_wait(self):
+        """Poll target for a device awaiting approval.
+
+        Answers "ok" (and sets the session cookie), "wait", or "no".
+        """
+        addr = self.client_address[0]
+        share = self.share
+        with share.lock:
+            approved = share.device == addr
+            waiting = share.pending == addr
+        body = (b"ok" if approved else b"wait" if waiting else b"no")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        if approved:
+            self.send_header("Set-Cookie",
+                             "sfm=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%d"
+                             % (share.token(), SESSION_HOURS * 3600))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def handle_login(self):
+        n = int(self.headers.get("Content-Length", 0) or 0)
+        body = self.rfile.read(min(n, 4096)).decode("utf-8", "replace")
+        given = urllib.parse.parse_qs(body).get("p", [""])[0].strip()
+        # Compare without spaces: the password is displayed grouped for
+        # readability and people type it either way.
+        want = self.share.password.replace(" ", "")
+        if not hmac.compare_digest(given.replace(" ", ""), want):
+            time.sleep(0.5)      # take the edge off guessing
+            self.send_html(login_page("Wrong code — try again."), 401)
+            return
+
+        # Right code, but that only earns a claim: the desktop still approves
+        # the device, and only one device is ever approved.
+        state = self.share.claim(self.client_address[0])
+        if state == "taken":
+            self.send_html(shell("In use", TAKEN_BODY), 403)
+            return
+        if state == "wait":
+            self.send_html(waiting_page(), 200)
+            return
+
+        self.send_response(303)
+        self.send_header("Location", "/")
+        self.send_header("Set-Cookie",
+                         "sfm=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%d"
+                         % (self.share.token(), SESSION_HOURS * 3600))
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def handle_upload(self, dest_rel):
+        dest = self.share.resolve("/" + dest_rel)
+        if not self.share.allow_upload or dest is None or not os.path.isdir(dest):
+            self.send_html(shell("No", "<div class=empty>Uploads are off</div>"), 403)
+            return
+        ctype = self.headers.get("Content-Type", "")
+        m = re.search(r'boundary=("?)([^";]+)\1', ctype)
+        if not m:
+            self.send_html(shell("Bad", "<div class=empty>Bad upload</div>"), 400)
+            return
+        total = int(self.headers.get("Content-Length", 0) or 0)
+        try:
+            saved = parse_multipart(self.rfile, m.group(2).encode(), total, dest)
+        except (ValueError, OSError) as e:
+            self.send_html(shell("Failed",
+                                 "<div class=empty>%s</div>" % html.escape(str(e))),
+                           400)
+            return
+        note = "Uploaded %d file%s" % (len(saved), "" if len(saved) == 1 else "s") \
+            if saved else "Nothing uploaded"
+        self.redirect("/%s?ok=%s" % (urllib.parse.quote(dest_rel.lstrip("/")),
+                                     urllib.parse.quote(note)))
+
+    def send_listing(self, full, urlpath, notice):
+        rel = os.path.relpath(full, self.share.base)
+        rel = "" if rel == "." else rel
+        entries = []
+        try:
+            for name in sorted(os.listdir(full), key=str.lower):
+                if name.startswith("."):
+                    continue
+                if self.share.single is not None and name != self.share.single:
+                    continue
+                p = os.path.join(full, name)
+                try:
+                    isdir = os.path.isdir(p)
+                    entries.append((name, isdir, 0 if isdir else os.path.getsize(p)))
+                except OSError:
+                    continue
+        except OSError:
+            self.send_html(shell("Denied", "<div class=empty>Cannot read</div>"), 403)
+            return
+        entries.sort(key=lambda e: (not e[1], e[0].lower()))
+        self.send_html(listing_page(rel, entries, self.share.allow_upload, notice))
+
+    def send_file(self, full):
+        try:
+            size = os.path.getsize(full)
+            fh = open(full, "rb")
+        except OSError:
+            self.send_html(shell("Denied", "<div class=empty>Cannot read</div>"), 403)
+            return
+        ctype = mimetypes.guess_type(full)[0] or "application/octet-stream"
+        with fh:
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(size))
+            self.send_header("Content-Disposition",
+                             'inline; filename="%s"'
+                             % os.path.basename(full).replace('"', ""))
+            self.end_headers()
+            if self.command != "HEAD":
+                try:
+                    shutil.copyfileobj(fh, self.wfile, 64 * 1024)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+
+
+# ---------------------------------------------------------------- qr
+
+def write_qr(url, out):
+    """Render the URL as a PNG. Returns the path, or "" if unavailable."""
+    try:
+        import qrcode
+    except ImportError:
+        return ""
+    img = qrcode.make(url, box_size=8, border=2)
+    img.save(out)
+    return out
+
+
+# ---------------------------------------------------------------- main
+
+def main():
+    ap = argparse.ArgumentParser(add_help=True)
+    ap.add_argument("path")
+    ap.add_argument("--port", type=int, default=0)
+    ap.add_argument("--no-upload", action="store_true")
+    args = ap.parse_args()
+
+    if not os.path.exists(args.path):
+        die("No such file or folder: %s" % args.path)
+
+    # Six digits, shown as two groups. Long enough that guessing is hopeless
+    # over a LAN, short enough to type on a phone without resenting it.
+    password = "%03d %03d" % (secrets.randbelow(1000), secrets.randbelow(1000))
+    share = Share(args.path, password, not args.no_upload)
+
+    ip = lan_ip()
+    try:
+        httpd = ThreadingHTTPServer((ip, args.port), Handler)
+    except OSError as e:
+        die("Could not start the server on %s: %s" % (ip, e))
+    httpd.share = share
+    httpd.daemon_threads = True
+    port = httpd.server_address[1]
+
+    url = "http://%s:%d/" % (ip, port)
+    qr = write_qr(url, "/tmp/swordshare-%s.png" % secrets.token_hex(6))
+
+    event("ready", url=url, ip=ip, port=port, password=password, qr=qr,
+          upload=share.allow_upload, name=os.path.basename(share.root))
+
+    # SwordFM answers pairing requests on stdin. readline rather than
+    # `for line in sys.stdin`, whose read-ahead buffering holds a command back
+    # until enough further input arrives — which here is never.
+    def commands():
+        for line in iter(sys.stdin.readline, ""):
+            cmd = line.strip()
+            if cmd in ("allow", "deny"):
+                who = share.decide(cmd == "allow")
+                event("paired", ip=who) if who else event("rejected")
+            elif cmd == "release":
+                share.release()
+                event("released")
+            elif cmd == "quit":
+                httpd.shutdown()
+                return
+
+    threading.Thread(target=commands, daemon=True).start()
+
+    # SwordFM stops the server with SIGTERM, whose default action skips the
+    # cleanup below and leaves the temporary QR image behind. Turning it into
+    # an exception lets the normal shutdown path run.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+
+    try:
+        httpd.serve_forever()
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    finally:
+        httpd.server_close()
+        if qr and os.path.exists(qr):
+            os.unlink(qr)
+
+
+if __name__ == "__main__":
+    main()

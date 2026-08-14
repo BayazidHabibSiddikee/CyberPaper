@@ -1,0 +1,14 @@
+# ── Add this to ~/.config/i3/config ──
+
+# Animated Wallpaper (auto-start)
+exec --no-startup-id /home/sword/animated-wallpaper/launch.sh gradient
+
+# Wallpaper mode switching hotkeys
+bindsym $mod+Ctrl+1 exec /home/sword/animated-wallpaper/launch.sh gradient
+bindsym $mod+Ctrl+2 exec /home/sword/animated-wallpaper/launch.sh particles
+bindsym $mod+Ctrl+3 exec /home/sword/animated-wallpaper/launch.sh wave
+bindsym $mod+Ctrl+4 exec /home/sword/animated-wallpaper/launch.sh matrix
+bindsym $mod+Ctrl+5 exec /home/sword/animated-wallpaper/launch.sh graph
+bindsym $mod+Ctrl+Tab exec /home/sword/animated-wallpaper/launch.sh --next
+bindsym $mod+Ctrl+n exec redshift -O 3000
+bindsym $mod+Ctrl+d exec redshift -x

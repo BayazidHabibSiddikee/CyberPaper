@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+"""swordgraph — Visualize folder structure as an interactive graph.
+
+Usage: swordgraph [path]
+
+Scans the given folder (or current directory) and generates a graph
+showing files and their relationships. Opens in sworddeck's graph area
+or shows a standalone window.
+"""
+import sys, os, json, subprocess, tempfile
+from pathlib import Path
+
+def scan_folder(root_path, max_depth=3, max_files=100):
+    """Scan folder and return nodes/edges for graph visualization."""
+    root = Path(root_path).resolve()
+    nodes = []
+    edges = []
+    node_id = 0
+    file_count = 0
+
+    # Root node
+    nodes.append({
+        "id": str(node_id),
+        "label": root.name or str(root),
+        "status": "done",
+        "type": "folder",
+        "path": str(root)
+    })
+    root_id = node_id
+    node_id += 1
+
+    def scan_dir(path, parent_id, depth):
+        nonlocal node_id, file_count
+        if depth > max_depth or file_count >= max_files:
+            return
+
+        try:
+            entries = sorted(path.iterdir(), key=lambda x: (x.is_file(), x.name.lower()))
+        except PermissionError:
+            return
+
+        for entry in entries:
+            if entry.name.startswith('.') and entry.name not in ('.git', '.config'):
+                continue
+            if entry.name in ('node_modules', '__pycache__', '.git', 'venv', '.venv'):
+                continue
+
+            file_count += 1
+            if file_count >= max_files:
+                break
+
+            is_dir = entry.is_dir()
+            node_type = "folder" if is_dir else "file"
+
+            # Color by extension
+            ext = entry.suffix.lower()
+            if is_dir:
+                status = "done"
+            elif ext in ('.py', '.js', '.ts', '.cpp', '.c', '.h', '.rs', '.go'):
+                status = "in-progress"  # code files
+            elif ext in ('.md', '.txt', '.log'):
+                status = "done"  # text files
+            elif ext in ('.png', '.jpg', '.gif', '.svg', '.webp'):
+                status = "blocked"  # image files
+            elif ext in ('.json', '.yaml', '.yml', '.toml', '.ini'):
+                status = "done"  # config files
+            else:
+                status = ""  # default
+
+            nodes.append({
+                "id": str(node_id),
+                "label": entry.name,
+                "status": status,
+                "type": node_type,
+                "path": str(entry)
+            })
+
+            edges.append({
+                "source": str(parent_id),
+                "target": str(node_id)
+            })
+
+            current_id = node_id
+            node_id += 1
+
+            if is_dir:
+                scan_dir(entry, current_id, depth + 1)
+
+    scan_dir(root, root_id, 0)
+    return nodes, edges
+
+
+def render_to_png(nodes, edges, output_path, width=1383, height=888, scale=4):
+    """Render graph to PNG using Graphviz.
+
+    Defaults match the deck's graph area aspect ratio; the panel scales the
+    PNG down with KeepAspectRatio, so rendering at a different shape wasted
+    pixels and softened the result.
+
+    `size` is a bound in inches and dpi converts it to pixels, so holding
+    size at width/96 and raising dpi supersamples the whole layout — nodes,
+    edges and text alike — for a crisp downscale instead of a soft one.
+    """
+    dpi = 96 * scale
+    # Create temp dot file
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.dot', delete=False) as f:
+        dot_path = f.name
+
+        f.write("digraph G {\n")
+        f.write("  layout=neato;\n")
+        f.write("  overlap=false;\n")
+        f.write("  splines=ortho;\n")
+        f.write("  bgcolor=\"transparent\";\n")
+        # ratio=fill stretches the layout to the box, distorting node shapes
+        # and text. Let neato keep its natural proportions instead.
+        f.write(f"  dpi={dpi};\n")
+        f.write(f"  size=\"{width/96:.3f},{height/96:.3f}\";\n")
+        f.write("  node [shape=ellipse, style=filled, fontname=\"DejaVu Sans Mono\", fontsize=10];\n")
+        f.write("  edge [color=\"#3e4451\", arrowsize=0.5];\n\n")
+
+        for node in nodes:
+            ntype = node.get("type", "file")
+            status = node.get("status", "")
+
+            if ntype == "folder":
+                color = "#61afef"
+                fillcolor = "#61afef25"
+                shape = "box"
+            elif status == "in-progress":
+                color = "#e5c07b"
+                fillcolor = "#e5c07b25"
+                shape = "ellipse"
+            elif status == "blocked":
+                color = "#e06c75"
+                fillcolor = "#e06c7525"
+                shape = "ellipse"
+            else:
+                color = "#98c379"
+                fillcolor = "#98c37925"
+                shape = "ellipse"
+
+            label = node["label"][:20] + "…" if len(node["label"]) > 20 else node["label"]
+            f.write(f'  {node["id"]} [label="{label}", color="{color}", fillcolor="{fillcolor}", shape={shape}];\n')
+
+        f.write("\n")
+
+        for edge in edges:
+            f.write(f'  {edge["source"]} -> {edge["target"]};\n')
+
+        f.write("}\n")
+
+    try:
+        subprocess.run(
+            ["neato", "-Tpng", "-o", output_path, dot_path],
+            capture_output=True, check=True
+        )
+        print(f"Graph rendered to: {output_path}")
+        return True
+    except FileNotFoundError:
+        print("Error: Graphviz not installed. Install with: pacman -S graphviz")
+        return False
+    except subprocess.CalledProcessError as e:
+        print(f"Error rendering graph: {e}")
+        return False
+    finally:
+        os.unlink(dot_path)
+
+
+def main():
+    args = [a for a in sys.argv[1:]]
+    out_png = None
+    if "--out" in args:
+        i = args.index("--out")
+        if i + 1 >= len(args):
+            print("Error: --out needs a path")
+            sys.exit(1)
+        out_png = os.path.expanduser(args[i + 1])
+        del args[i:i + 2]
+
+    path = args[0] if args else os.getcwd()
+    path = os.path.expanduser(path)
+
+    if not os.path.isdir(path):
+        print(f"Error: {path} is not a directory")
+        sys.exit(1)
+
+    print(f"Scanning: {path}")
+    nodes, edges = scan_folder(path)
+    print(f"Found: {len(nodes)} items")
+
+    # --out renders a one-off image (e.g. swordfm's preview pane) and leaves
+    # the deck's own graph untouched.
+    if out_png:
+        os.makedirs(os.path.dirname(out_png) or ".", exist_ok=True)
+        sys.exit(0 if render_to_png(nodes, edges, out_png) else 1)
+
+    # Save graph JSON for sworddeck
+    cfg_dir = os.path.expanduser("~/.config/animated-wallpaper")
+    os.makedirs(cfg_dir, exist_ok=True)
+
+    graph_data = {"nodes": nodes, "edges": edges}
+    graph_json = os.path.join(cfg_dir, "graph.json")
+
+    with open(graph_json, 'w') as f:
+        json.dump(graph_data, f, indent=2)
+
+    # Render to PNG
+    graph_png = os.path.join(cfg_dir, "graph.png")
+    if render_to_png(nodes, edges, graph_png):
+        print("Graph updated in sworddeck!")
+        # Notify sworddeck to refresh
+        print("Restart sworddeck to see the graph.")
+    else:
+        print("Failed to render graph. Check if graphviz is installed.")
+
+
+if __name__ == "__main__":
+    main()

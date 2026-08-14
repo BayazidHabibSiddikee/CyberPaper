@@ -1,0 +1,26 @@
+; cava-config — audio bars for the left-bottom panel, matrix/cyan theme.
+; Usage: cava -p ~/animated-wallpaper/cava-config
+
+[general]
+bars = 24
+framerate = 60
+autosens = 1
+sensitivity = 100
+
+[input]
+method = pulse
+source = auto
+
+[output]
+method = ncurses
+channels = mono
+
+[color]
+gradient = 1
+gradient_count = 2
+gradient_color_1 = '#00ffcc'
+gradient_color_2 = '#0099ff'
+background = 'default'
+
+[smoothing]
+noise_reduction = 55
